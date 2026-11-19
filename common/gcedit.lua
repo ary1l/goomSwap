@@ -11,6 +11,7 @@ local jobAnalysis = gFunc.LoadFile('common\\gceditjob.lua')
 local actionModel = gFunc.LoadFile('common\\gceditactions.lua')
 local statModel = gFunc.LoadFile('common\\gceditstats.lua')
 local actions
+local rescued = nil -- the editor state a render error closed with unsaved edits (gcedit.Open restores it)
 local editorInspect = editorUI.Inspect
 local editorData = gFunc.LoadFile('common\\gceditdata.lua') -- constant tables
 local editorGroups = gFunc.LoadFile('common\\gceditgroups.lua') -- heading order and your own headings
@@ -675,7 +676,7 @@ local go_to, NONE, LAC_WORDS, is_slot_word, clip_begin, clip_skip, clip_drawn, c
     m_gceditlist.set_status, m_gceditlist.rp_uses, m_gceditlist.draw_sets, m_gceditlist.descs, m_gceditlist.SJIS,
     m_gceditlist.ELEM_ICON
 local m_gceditinspect = gFunc.LoadFile('common\\gceditinspect.lua')(
-    BASE, CHILD_BORDERS, ELEM_ICON, NONE, SCREEN, SJIS, actions, ago, augmentInfo, by_name, cardText, ctx, current,
+    BASE, CHILD_BORDERS, ELEM_ICON, NONE, SCREEN, SJIS, ago, augmentInfo, by_name, cardText, ctx, current,
     descs, draw_icon, drop_new, edit, editorInspect, editorPanels, editorPreferences, editorState, empty_armor,
     feedback, ghost_of, go_to, help, imgui, is_slot_word, itemTooltip, item_id, make_set, owned_for, palette,
     pending_weapon_mode, pill, profiler, red_button, registration_plan, request_context, rp_uses, save_preferences,
@@ -1612,8 +1613,16 @@ local function render()
     imgui.PopStyleColor(n)
     profiler.Finish('Render', timing)
     if not ok then
+        -- unsaved edits survive the error: the next /gcedit on the same file reopens them
+        local kept = editorState.open and (dirty_count() > 0)
+        if kept then
+            local copy = {}
+            for k, v in pairs(editorState) do copy[k] = v end
+            rescued = { path = editorState.document.path, state = copy }
+        end
         gcedit.Close()
-        gearEngine.Err('/gcedit closed after an error: ' .. tostring(err))
+        gearEngine.Err('/gcedit closed after an error: ' .. tostring(err)
+            .. (kept and ' Unsaved edits kept: /gcedit to reopen them.' or ''))
     elseif editorState.open and (editorState.ui.open[1] == false) then
         -- X again while asked: close, dropping them
         if editorState.ui.force or (dirty_count() == 0) or (editorState.ui.confirm == 'close') then
@@ -1641,6 +1650,24 @@ function gcedit.Open(include, setName, slot, draft)
     end
     local player = AshitaCore:GetMemoryManager():GetPlayer()
     local path = (draft ~= nil) and draft.target or gProfile.FilePath
+    if rescued ~= nil then
+        if (draft == nil) and (rescued.path == path) then
+            -- reopen the edits an error closed, without the view that failed
+            set_state(rescued.state)
+            rescued = nil
+            editorState.cache = {}
+            bind_actions()
+            rescan()
+            gearEngine.Say('/gcedit: unsaved edits restored.')
+            ashita.events.register('d3d_present', 'gcedit_render', render)
+            return
+        end
+        if draft ~= nil then
+            gearEngine.Say('/gcedit: unsaved edits from the last error are kept; /gcedit on the job file reopens them.')
+        else
+            rescued = nil -- another job's file: the old edits do not apply
+        end
+    end
     set_state(editorPreferences.New({
         path = path,
         sourcePath = draft and draft.src,
