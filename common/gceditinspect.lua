@@ -1,6 +1,6 @@
 -- /gcedit: item details, inspection, stats and Compare, set actions and melee modes.
 return function(
-    BASE, CHILD_BORDERS, ELEM_ICON, NONE, SCREEN, SJIS, actions, ago, augmentInfo, by_name, cardText, ctx, current,
+    BASE, CHILD_BORDERS, ELEM_ICON, NONE, SCREEN, SJIS, ago, augmentInfo, by_name, cardText, ctx, current,
     descs, draw_icon, drop_new, edit, editorInspect, editorPanels, editorPreferences, editorState, empty_armor,
     feedback, ghost_of, go_to, help, imgui, is_slot_word, itemTooltip, item_id, make_set, owned_for, palette,
     pending_weapon_mode, pill, profiler, red_button, registration_plan, request_context, rp_uses, save_preferences,
@@ -77,7 +77,7 @@ local function inspection_target(set, slot, gear, source)
             if layer then
                 value = { kind = 'item', name = layer.name }
                 source = (view.rec.expected and 'Expected result: ' or 'Recorded result: ')
-                    .. actions.SourceLabel(layer.by)
+                    .. ctx.actions.SourceLabel(layer.by)
             end
         end
         if not value then
