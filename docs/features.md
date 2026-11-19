@@ -4,7 +4,7 @@
 
 ## Weapons
 
-- The mode is what you return to; action sets naming weapons still swap them. Slot picks beat the mode for their slot.
+- The mode is what you return to; action sets naming weapons still swap them. Slot picks beat the mode for their slot until `/wm` changes mode: it clears picks for the slots its `Weapon_` set names (a `/rw` pick stays when the set has no Range).
 - Out of combat, idle sets' weapons win (`IdleWeapons`); Main+Sub and Range+Ammo move as pairs.
 - At `WeaponTPGuard`+ TP (examples: 0 on mages, 100 PLD) Main/Sub/Range stay, except songs, rolls, cures,
   enfeebling, enhancing, geomancy. Aftermath holds them too (`AftermathHold`). Weapon commands always swap.
