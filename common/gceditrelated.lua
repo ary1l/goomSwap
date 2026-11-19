@@ -1036,9 +1036,12 @@ local function draw_context_menu()
             set_action_entries(set)
             -- Move up / down under its heading (the heading takes your own order), or to another heading: this
             -- set by its exact name (char.lua's settings, or the shared headings file)
-            if set.parentName == nil then -- a set inside a set stays under its parent
-                local H = ctx.headings
-                imgui.Separator()
+            -- a set inside a set (Buffs['Haste']) sits under its parent in file order, or where it was moved
+            local H = ctx.headings
+            local parent = (set.parentName ~= nil) and editorState.document.model.byName[set.parentName] or nil
+            local nested = (parent ~= nil) and (parent.group == set.group)
+            imgui.Separator()
+            if not nested then
                 for _, mv in ipairs({ { 'Move up', -1 }, { 'Move down', 1 } }) do
                     if mv[2] > 0 then imgui.SameLine() end
                     if imgui.SmallButton(mv[1] .. ' in ' .. set.group .. '##ownorder') then
@@ -1053,24 +1056,27 @@ local function draw_context_menu()
                         end
                     end
                 end
-                imgui.TextColored(palette.dim, 'Move to heading ('
-                    .. ((H.source() == 'shared') and 'every character' or 'every job on this character') .. '):')
-                local n = 0
-                for _, h in ipairs(H.order()) do
-                    if h ~= set.group then
-                        if (n % 3) ~= 0 then imgui.SameLine() end
-                        n = n + 1
-                        if imgui.SmallButton(h .. '##moveto') then
-                            H.save(H.lib.Place(H.setting(), H.builtins, set.name, h))
-                            imgui.CloseCurrentPopup()
-                        end
-                    end
-                end
-                if (set.builtin ~= nil) and (H.lib.PlacedBy(H.setting(), set.name) ~= nil) then
-                    if imgui.SmallButton('Back to where its name puts it##moveto') then
-                        H.save(H.lib.Place(H.setting(), H.builtins, set.name, nil))
+            end
+            imgui.TextColored(palette.dim, 'Move to heading ('
+                .. ((H.source() == 'shared') and 'every character' or 'every job on this character') .. '):')
+            local n = 0
+            for _, h in ipairs(H.order()) do
+                if h ~= set.group then
+                    if (n % 3) ~= 0 then imgui.SameLine() end
+                    n = n + 1
+                    if imgui.SmallButton(h .. '##moveto') then
+                        local to = h
+                        if (parent ~= nil) and (parent.group == h) then to = nil end -- its parent's: back under it
+                        H.save(H.lib.Place(H.setting(), H.builtins, set.name, to))
                         imgui.CloseCurrentPopup()
                     end
+                end
+            end
+            if (set.builtin ~= nil) and (H.lib.PlacedBy(H.setting(), set.name) ~= nil) then
+                if imgui.SmallButton(((parent ~= nil) and ('Back under ' .. parent.name)
+                    or 'Back to where its name puts it') .. '##moveto') then
+                    H.save(H.lib.Place(H.setting(), H.builtins, set.name, nil))
+                    imgui.CloseCurrentPopup()
                 end
             end
             draw_weapon_copies(set)
@@ -1176,7 +1182,7 @@ local function rename_new(set, new)
     doc.model.byName[old], doc.model.byLower[set.lname] = nil, nil
     set.name, set.lname, set.bracket = new, string.lower(new), (setFile.FormatKey(new) ~= new)
     if set.parentName ~= nil then set.key = setFile.ChildKey(set, new) end
-    set.group = group_of(set.parentName or new)
+    set.group = group_of(new, set.parentName)
     doc.model.byName[new], doc.model.byLower[set.lname] = set, set
     doc.edits[new], doc.edits[old] = doc.edits[old], nil
     for _, u in ipairs(editorState.history.entries or {}) do

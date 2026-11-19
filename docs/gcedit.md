@@ -20,7 +20,7 @@ Edits your loaded job file. Changes stay in memory until you confirm a save. `/g
 | A Main/Sub/Range pick (`/mw` `/sw` `/rw`) | Nothing: every item in a `Weapon_` set is one. Others go in `gcinclude.SubModes` (etc.) in the file |
 | A COR/RNG gun | Add its name to `gcinclude.RangeModes` in the file |
 | A melee mode (`/mset`) | **Related** tab, **+ New mode**; its sets are `<set>_<mode>` (`Tp_Hybrid`) |
-| A set for one buff | Open `Buffs` (idle/engaged), `Buffs_Ws` or `Buffs_Midcast`, type the buff's name as the game shows it, **New buff set**. Each shows under its parent (`Buffs['Aftermath: Lv.3']`) and edits, renames, deletes and copies to other jobs like any set |
+| A set for one buff | Open `Buffs` (idle/engaged), `Buffs_Ws` or `Buffs_Midcast`, type the buff's name as the game shows it, **New buff set**. Each shows under its parent (`Buffs['Aftermath: Lv.3']`) and edits, deletes and copies to other jobs like any set. Renaming one also renames code that takes it from its parent (`sets.Buffs['Haste']`, `sets.Buffs.Haste`) |
 
 ## Headings
 
@@ -32,6 +32,8 @@ The set list is grouped under headings (Idle, Defense, Melee, Weapons...). Arran
 - **Right-click a set:** **Move to heading** puts that set under any heading; **Back to where its name puts it**
   undoes the move. **Move up / Move down** reorders it inside its heading.
 - **Drag a set** onto a heading to move it there, or onto another set to put it just before that one.
+- **Buff sets** (`Buffs['Haste']`) sit under their parent in file order. Drag one or use **Move to heading** to put
+  it elsewhere (shown by its full name there); **Back under Buffs** returns it.
 - **Hide** (heading menu): **Hide on <JOB>** or **Hide on every job**. **Show hidden** (beside the filters) shows
   them again, marked hidden; a search always shows them. **Show again** undoes it.
 - **Sets in it** (heading menu): **File order**, **A-Z**, or **Your order** (what Move up / down and dragging make).

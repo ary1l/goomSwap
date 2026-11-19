@@ -311,8 +311,13 @@ local function headings_setting()
     return settingsFiles.HeadingPref('EditorGroups')
 end
 
--- The heading a set sits under, and its built-in one.
-local function group_of(n)
+-- The heading a set sits under, and its built-in one. parent: a set inside a set (Buffs['Haste']) goes where it
+-- was moved by its exact name, else under its parent.
+local function group_of(n, parent)
+    if parent ~= nil then
+        local g, builtin = group_of(parent)
+        return editorGroups.PlacedBy(headings_setting(), n) or g, builtin
+    end
     local builtin = builtin_group(n)
     return editorGroups.Assign(n, builtin, headings_setting()), builtin
 end
@@ -329,7 +334,7 @@ local ARMOR = { 'Head', 'Neck', 'Ear1', 'Ear2', 'Body', 'Hands', 'Ring1', 'Ring2
 local function regroup()
     local model = (editorState.document ~= nil) and editorState.document.model or nil
     if model == nil then return end
-    for _, set in ipairs(model.list) do set.group, set.builtin = group_of(set.parentName or set.name) end
+    for _, set in ipairs(model.list) do set.group, set.builtin = group_of(set.name, set.parentName) end
     editorState.cache.listKey = nil
 end
 
@@ -442,7 +447,7 @@ local function load_model(document)
     model.text = text -- the job file's handlers are read from it (scan_job), once, when All sets first needs them
     model.byLower = {}
     for _, set in ipairs(model.list) do
-        set.group, set.builtin = group_of(set.parentName or set.name)
+        set.group, set.builtin = group_of(set.name, set.parentName)
         set.lname = string.lower(set.name)
         model.byLower[set.lname] = set
         local n = 0
@@ -745,13 +750,12 @@ local function draw_rename()
         imgui.PushTextWrapPos(440)
         if problem then
             imgui.TextColored(palette.bad, problem)
-        elseif child then
-            imgui.TextColored(palette.dim, 'Only its key in ' .. set.parentName .. ' changes; code naming it is left alone.')
         else
             local refs = setFile.RenameCount(editorState.document.model.text, editorState.document.model,
                 set.name, new) or 0
-            imgui.TextColored(palette.dim, refs .. ' reference' .. (refs == 1 and '' or 's')
-                .. ' in code (sets.X, ByName, EquipSet, weapon mode lists) renamed too. Comments are left alone.')
+            imgui.TextColored(palette.dim, refs .. ' reference' .. (refs == 1 and '' or 's') .. ' in code ('
+                .. (child and ('sets.' .. set.parentName .. "['" .. set.key .. "']")
+                    or 'sets.X, ByName, EquipSet, weapon mode lists') .. ') renamed too. Comments are left alone.')
         end
         if (not child) and (by_name(set) or (ENGINE_SET[string.lower(set.name)] ~= nil)) then
             imgui.TextColored(palette.warn,

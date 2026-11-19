@@ -95,7 +95,7 @@ local function make_set(name, copyFrom, stay, parent, key)
         parentName = parent and parent.name,
         key = key,
     }
-    set.group, set.builtin = group_of(parent and parent.name or name)
+    set.group, set.builtin = group_of(name, parent and parent.name)
     editorState.document.model.byLower[set.lname] = set
     editorState.document.revision = editorState.document.revision + 1
     if (copyFrom ~= nil) and not copyFrom.new then set.after = copyFrom.name end

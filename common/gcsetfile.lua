@@ -871,17 +871,60 @@ end
 local REF_CALLS = { 'ByName', 'EquipSet', 'ForceEquipSet', 'FindSet', 'FindFilled' }
 local MODE_LISTS = { 'WeaponModes', 'DefaultWeapons', 'WeaponRoles' }
 
+-- A set inside a set renamed: each place code takes key `old` from the parent (sets.Buffs['old'],
+-- sets['Buffs'].old, FindSet('Buffs')['old']) gets `new`. Returns how many.
+local function child_refs(s, code, parent, old, new, out)
+    local ends = {} -- where each reference to the parent ends
+    for _, name, after in string.gmatch(code, '()%f[%w_][sS]ets%s*%.%s*([%a_][%w_]*)()') do
+        if name == parent then ends[#ends + 1] = after end
+    end
+    local function quoted_ref(at, close)
+        local text, after = read_string(s, at)
+        if text ~= parent then return end
+        local k = skip_ws(s, after)
+        if string.sub(s, k, k) == close then ends[#ends + 1] = k + 1 end
+    end
+    for at in string.gmatch(code, '%f[%w_][sS]ets%s*%[%s*()[\'"]') do quoted_ref(at, ']') end
+    for _, call in ipairs(REF_CALLS) do
+        for at in string.gmatch(code, '%f[%w_]' .. call .. '%s*%(%s*()[\'"]') do quoted_ref(at, ')') end
+    end
+    local refs, newKey = 0, key_text(new)
+    for _, p in ipairs(ends) do
+        local j = skip_ws(s, p)
+        local c = string.sub(s, j, j)
+        if (c == '[') and (long_bracket(s, j) == nil) then
+            local k = skip_ws(s, j + 1)
+            local qc = string.sub(s, k, k)
+            if (qc == "'") or (qc == '"') then
+                local text, after = read_string(s, k)
+                local e = skip_ws(s, after)
+                if (text == old) and (string.sub(s, e, e) == ']') then
+                    out[#out + 1] = { k + 1, after - 1, quoted(new, qc) }
+                    refs = refs + 1
+                end
+            end
+        elseif (c == '.') and (string.sub(s, j + 1, j + 1) ~= '.') then
+            local n0, name, n1 = string.match(s, '^%s*()([%a_][%w_]*)()', j + 1)
+            if name == old then
+                out[#out + 1] = { j, n1, (string.sub(newKey, 1, 1) == '[') and newKey or ('.' .. newKey) }
+                refs = refs + 1
+            end
+        end
+    end
+    return refs
+end
+
 -- Splices renaming set `old` to `new` everywhere the file names it: the key, sets.Old / sets['Old'],
 -- ByName('Old') and the like, and for a Weapon_ set its mode in WeaponModes / DefaultWeapons / WeaponRoles.
 -- Returns the number of places outside the key.
 local function rename_splices(s, model, old, new, out)
     local set = model.byName[old]
     if (set == nil) or (set.entry == nil) or (set.entry.keyEnd == nil) then return nil end
-    if set.parentName ~= nil then -- a set inside a set: only its key
+    if set.parentName ~= nil then -- a set inside a set: its key, and code taking it from the parent
         local key = child_key(set, new)
         if key == nil then return nil end
         out[#out + 1] = { set.entry.start, set.entry.keyEnd + 1, key_text(key) }
-        return 0
+        return child_refs(s, code_only(s), set.parentName, set.key, key, out)
     end
     out[#out + 1] = { set.entry.start, set.entry.keyEnd + 1, key_text(new) }
     local code, refs = code_only(s), 0
