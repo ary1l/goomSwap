@@ -82,7 +82,9 @@ local function suggestions()
     return list
 end
 
-local function make_set(name, copyFrom, stay)
+-- parent: a set that holds sets (Buffs); the new one is its key `key`, named Buffs['key'].
+local function make_set(name, copyFrom, stay, parent, key)
+    if parent ~= nil then name = setFile.ChildName(parent.name, key) end
     local set = {
         name = name,
         lname = string.lower(name),
@@ -90,12 +92,20 @@ local function make_set(name, copyFrom, stay)
         slots = {},
         count = 0,
         bracket = (setFile.FormatKey(name) ~= name),
+        parentName = parent and parent.name,
+        key = key,
     }
-    set.group, set.builtin = group_of(name)
+    set.group, set.builtin = group_of(parent and parent.name or name)
     editorState.document.model.byLower[set.lname] = set
     editorState.document.revision = editorState.document.revision + 1
     if (copyFrom ~= nil) and not copyFrom.new then set.after = copyFrom.name end
-    editorState.document.model.list[#editorState.document.model.list + 1] = set
+    local list, at = editorState.document.model.list, #editorState.document.model.list + 1
+    if parent ~= nil then -- in the list right after the parent's other sets
+        for i, s in ipairs(list) do
+            if (s == parent) or (s.parentName == parent.name) then at = i + 1 end
+        end
+    end
+    table.insert(list, at, set)
     editorState.document.model.byName[name] = set
     editorState.document.newSets[#editorState.document.newSets + 1] = set
     if copyFrom ~= nil then

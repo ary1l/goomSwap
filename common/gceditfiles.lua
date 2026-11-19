@@ -36,9 +36,16 @@ function files.PlanCopy(o, targets)
         elseif p.model == nil then
             p.err = 'no sets table in it'
         else
-            p.set = by_lower(p.model)[string.lower(o.name)]
+            local sets = by_lower(p.model)
+            p.set = sets[string.lower(o.name)]
             if (p.set ~= nil) and ((p.set.code ~= nil) or p.set.extra or (p.set.close == nil)) then
                 p.err = p.set.name .. ' is written as code there'
+            elseif (p.set == nil) and (o.parentName ~= nil) then -- a set inside a set (Buffs['X']): into that file's
+                p.parent, p.childKey = sets[string.lower(o.parentName)], o.key
+                if (p.parent == nil) or (p.parent.code ~= nil) or (p.parent.close == nil)
+                    or (p.parent.parentName ~= nil) then
+                    p.err = 'no ' .. o.parentName .. ' table there'
+                end
             end
         end
         if p.err == nil then
@@ -83,6 +90,10 @@ function files.WriteCopies(o, plans)
                 local ok
                 if p.set ~= nil then
                     ok = F.AddSlotEdits(p.text, p.set, p.edits, splices)
+                elseif p.parent ~= nil then
+                    local n = F.ChildName(p.parent.name, p.childKey)
+                    ok = F.AddNewSets(p.text, p.model, { { name = n, parentName = p.parent.name, key = p.childKey } },
+                        { [n] = p.edits }, splices)
                 else
                     ok = F.AddNewSets(p.text, p.model, { { name = o.name } }, { [o.name] = p.edits }, splices)
                 end

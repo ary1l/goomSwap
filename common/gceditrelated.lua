@@ -10,7 +10,7 @@ return function(
 -- Copy as a weapon set: this set's slots as a new <name>_<weapon> (Tp_Default -> Tp_Chango, Tp_Acc ->
 -- Tp_Chango_Acc), or by weapon type (_2h, _1h); then change what differs. Not written until Save.
 local function draw_weapon_copies(set)
-    if (set.code ~= nil) or set.extra or editorState.document.deleted[set.name] then return end
+    if (set.code ~= nil) or set.extra or (set.parentName ~= nil) or editorState.document.deleted[set.name] then return end
     local targets = ctx.actions.WeaponModes()
     targets[#targets + 1], targets[#targets + 2] = '2h', '1h'
     local shown = 0
@@ -1036,39 +1036,41 @@ local function draw_context_menu()
             set_action_entries(set)
             -- Move up / down under its heading (the heading takes your own order), or to another heading: this
             -- set by its exact name (char.lua's settings, or the shared headings file)
-            local H = ctx.headings
-            imgui.Separator()
-            for _, mv in ipairs({ { 'Move up', -1 }, { 'Move down', 1 } }) do
-                if mv[2] > 0 then imgui.SameLine() end
-                if imgui.SmallButton(mv[1] .. ' in ' .. set.group .. '##ownorder') then
-                    local list = H.lib.MoveInOrder(H.rows(set.group), set.name, mv[2])
-                    if list == nil then
-                        H.savePrefs(nil, (mv[2] < 0) and 'already at the top' or 'already at the bottom')
-                    else
-                        H.savePrefs({
-                            EditorOrder = H.lib.With(H.pref('EditorOrder'), set.group, list),
-                            EditorSort = H.lib.With(H.pref('EditorSort'), set.group, 'own'),
-                        })
+            if set.parentName == nil then -- a set inside a set stays under its parent
+                local H = ctx.headings
+                imgui.Separator()
+                for _, mv in ipairs({ { 'Move up', -1 }, { 'Move down', 1 } }) do
+                    if mv[2] > 0 then imgui.SameLine() end
+                    if imgui.SmallButton(mv[1] .. ' in ' .. set.group .. '##ownorder') then
+                        local list = H.lib.MoveInOrder(H.rows(set.group), set.name, mv[2])
+                        if list == nil then
+                            H.savePrefs(nil, (mv[2] < 0) and 'already at the top' or 'already at the bottom')
+                        else
+                            H.savePrefs({
+                                EditorOrder = H.lib.With(H.pref('EditorOrder'), set.group, list),
+                                EditorSort = H.lib.With(H.pref('EditorSort'), set.group, 'own'),
+                            })
+                        end
                     end
                 end
-            end
-            imgui.TextColored(palette.dim, 'Move to heading ('
-                .. ((H.source() == 'shared') and 'every character' or 'every job on this character') .. '):')
-            local n = 0
-            for _, h in ipairs(H.order()) do
-                if h ~= set.group then
-                    if (n % 3) ~= 0 then imgui.SameLine() end
-                    n = n + 1
-                    if imgui.SmallButton(h .. '##moveto') then
-                        H.save(H.lib.Place(H.setting(), H.builtins, set.name, h))
+                imgui.TextColored(palette.dim, 'Move to heading ('
+                    .. ((H.source() == 'shared') and 'every character' or 'every job on this character') .. '):')
+                local n = 0
+                for _, h in ipairs(H.order()) do
+                    if h ~= set.group then
+                        if (n % 3) ~= 0 then imgui.SameLine() end
+                        n = n + 1
+                        if imgui.SmallButton(h .. '##moveto') then
+                            H.save(H.lib.Place(H.setting(), H.builtins, set.name, h))
+                            imgui.CloseCurrentPopup()
+                        end
+                    end
+                end
+                if (set.builtin ~= nil) and (H.lib.PlacedBy(H.setting(), set.name) ~= nil) then
+                    if imgui.SmallButton('Back to where its name puts it##moveto') then
+                        H.save(H.lib.Place(H.setting(), H.builtins, set.name, nil))
                         imgui.CloseCurrentPopup()
                     end
-                end
-            end
-            if (set.builtin ~= nil) and (H.lib.PlacedBy(H.setting(), set.name) ~= nil) then
-                if imgui.SmallButton('Back to where its name puts it##moveto') then
-                    H.save(H.lib.Place(H.setting(), H.builtins, set.name, nil))
-                    imgui.CloseCurrentPopup()
                 end
             end
             draw_weapon_copies(set)
@@ -1146,7 +1148,9 @@ end
 local function variants_of(name)
     local out = {}
     for _, set in ipairs(editorState.document.model.list) do
-        if string.sub(set.name, 1, #name + 1) == name .. '_' then out[#out + 1] = set.name end
+        if (set.parentName == nil) and (string.sub(set.name, 1, #name + 1) == name .. '_') then
+            out[#out + 1] = set.name
+        end
     end
     return out
 end
@@ -1171,7 +1175,8 @@ local function rename_new(set, new)
     local doc, old = editorState.document, set.name
     doc.model.byName[old], doc.model.byLower[set.lname] = nil, nil
     set.name, set.lname, set.bracket = new, string.lower(new), (setFile.FormatKey(new) ~= new)
-    set.group = group_of(new)
+    if set.parentName ~= nil then set.key = setFile.ChildKey(set, new) end
+    set.group = group_of(set.parentName or new)
     doc.model.byName[new], doc.model.byLower[set.lname] = set, set
     doc.edits[new], doc.edits[old] = doc.edits[old], nil
     for _, u in ipairs(editorState.history.entries or {}) do

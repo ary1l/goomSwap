@@ -43,7 +43,7 @@ and its toggle wears it. Until then it falls back as the table says (`Aminon` â†
 | `Proc` `Ws_Proc` | `/proc`: engaged, `Proc` in place of your sets (weapon mode stays); on WS `Ws_Proc` (else, missing or empty, `Proc`) in place of every WS set |
 | `Incapacitated` `Sleeping` | disabled / asleep (weapons pass the TP hold) |
 | `Absorb` `Absorb_TP` `LightBonus` | Absorb spells / Healing Magic |
-| `Buffs` `Buffs_Ws` `Buffs_Midcast` | `{ ['Aftermath: Lv.3'] = {...} }` while the buff is up |
+| `Buffs` `Buffs_Ws` `Buffs_Midcast` | `{ ['Aftermath: Lv.3'] = {...} }` while the buff is up; each is its own set in `/gcedit` |
 | `Hoxne_Tp` `_Idle` `_Dt` `_Ws` `Hoxne_<set>_<buff>` | `/hoxne` + Enchantment; each also `_<mset>` (`Hoxne_Dt_Impetus_SubtleBlow`) |
 | `Ws_Dt` `<ws>_Dt` `<ws>_<mset>_Dt` | WS while `/dt` is on |
 | `XIRoll` | idle with a roll at 11 |

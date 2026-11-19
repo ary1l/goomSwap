@@ -20,6 +20,7 @@ Edits your loaded job file. Changes stay in memory until you confirm a save. `/g
 | A Main/Sub/Range pick (`/mw` `/sw` `/rw`) | Nothing: every item in a `Weapon_` set is one. Others go in `gcinclude.SubModes` (etc.) in the file |
 | A COR/RNG gun | Add its name to `gcinclude.RangeModes` in the file |
 | A melee mode (`/mset`) | **Related** tab, **+ New mode**; its sets are `<set>_<mode>` (`Tp_Hybrid`) |
+| A set for one buff | Open `Buffs` (idle/engaged), `Buffs_Ws` or `Buffs_Midcast`, type the buff's name as the game shows it, **New buff set**. Each shows under its parent (`Buffs['Aftermath: Lv.3']`) and edits, renames, deletes and copies to other jobs like any set |
 
 ## Headings
 
@@ -155,6 +156,6 @@ a job file's own setting still wins. Details: [Settings](settings.md).
 
 **Save + reload** shows a review (before/after per set, new, deleted and renamed sets, weapon and melee modes);
 cancelling writes nothing. Saving checks the file didn't change on disk and still parses, writes a dated backup,
-then reloads (reopening the editor if ticked). Code-defined or nested sets need a text editor; everything outside
-the gear definitions is kept as written. The newest ten editor backups per file are kept (`EditorBackupKeep` in
+then reloads (reopening the editor if ticked). Code-defined sets need a text editor; everything outside the gear
+definitions is kept as written. The newest ten editor backups per file are kept (`EditorBackupKeep` in
 char.lua's `settings`, `0` keeps all). Widths, favorites and density live in the job's `.gcedit-ui` file.

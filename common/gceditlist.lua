@@ -544,7 +544,7 @@ local function draw_sets()
                 if not clip_skip(clip, set, on and scroll) then -- the set picked elsewhere is drawn, to scroll to it
                     -- its label, redone when an edit or the set list changes (editorState.document.revision)
                     if set.rowVer ~= editorState.document.revision then
-                        local label = set.name
+                        local label = (set.parentName ~= nil) and ('    ' .. set.key) or set.name
                         if editorState.document.deleted[set.name] then
                             label = label .. ' (delete)'
                         elseif set.new then
@@ -565,8 +565,10 @@ local function draw_sets()
                     if imgui.IsItemHovered() and (editorState.ui.dragSet == nil) then
                         set_tip(set_completion_tip(set, status))
                     end
-                    drag_set_from(set)
-                    drop_set_here(grp.g, set)
+                    if set.parentName == nil then -- a set inside a set moves with its parent
+                        drag_set_from(set)
+                        drop_set_here(grp.g, set)
+                    end
                     if col ~= nil then imgui.PopStyleColor(1) end
                     if on then left_bar(palette.sel) end
                     if on and scroll and (imgui.SetScrollHereY ~= nil) then imgui.SetScrollHereY(0.5) end
