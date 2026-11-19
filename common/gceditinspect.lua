@@ -1,0 +1,983 @@
+-- /gcedit: item details, inspection, stats and Compare, set actions and melee modes.
+return function(
+    BASE, CHILD_BORDERS, ELEM_ICON, NONE, SCREEN, SJIS, actions, ago, augmentInfo, by_name, cardText, ctx, current,
+    descs, draw_icon, drop_new, edit, editorInspect, editorPanels, editorPreferences, editorState, empty_armor,
+    feedback, ghost_of, go_to, help, imgui, is_slot_word, itemTooltip, item_id, make_set, owned_for, palette,
+    pending_weapon_mode, pill, profiler, red_button, registration_plan, request_context, rp_uses, save_preferences,
+    set_status, set_tip, statModel, tag, text_w, use_worn, where, wrap, xy
+)
+local function describe(name)
+    local key = string.lower(name)
+    if key == "carrier's sash" then
+        return 'DEF:5 HP+20\nFire resistance +15  Ice resistance +15\nWind resistance +15  Earth resistance +15\nLightning resistance +15  Water resistance +15\nLight resistance +15  Dark resistance +15'
+    end
+    if descs[key] ~= nil then return descs[key] or nil end
+    descs[key] = false
+    local id = item_id(name)
+    local ok, r = pcall(function() return AshitaCore:GetResourceManager():GetItemById(id) end)
+    if (id ~= nil) and ok and (r ~= nil) and (r.Description ~= nil) and (type(r.Description[1]) == 'string')
+        and (r.Description[1] ~= '') then
+        -- the game's element icons are two bytes (a high byte, then 0x1F-0x26 in element order): their names instead
+        local d = string.gsub(r.Description[1], '[\128-\255]([\31-\38])', function(c)
+            return ELEM_ICON[string.byte(c)]
+        end)
+        -- Shift-JIS two-byte signs ('Store TP'+1～5): the ASCII look-alike; any other pair, then any other byte: '?'
+        d = string.gsub(d, '([\129-\159\224-\252])([\64-\252])', function(a, b)
+            return SJIS[string.byte(a) * 256 + string.byte(b)] or '?'
+        end)
+        d = string.gsub(d, '[\128-\255]', '?')
+        descs[key] = d
+    end
+    return descs[key] or nil
+end
+
+-- A comparison belongs to the selected set and includes all equipment selectors.
+local function cmp_of(set)
+    if (editorState.ui.cmp == nil) or (editorState.ui.cmp.set ~= set.name) then return nil end
+    return editorState.document.model.byName[editorState.ui.cmp.with]
+end
+local function item_model(value, owned)
+    local bag, accessible = where(value.name)
+    return itemTooltip.Model(value, owned, {
+        description = describe(value.name),
+        bag = bag,
+        equippable = bag and accessible,
+        rule = is_slot_word(value),
+    })
+end
+
+local function exact_owned(value)
+    local owned, key, ambiguous
+    for _, copy in ipairs(editorState.inventory.copiesByName[string.lower(value.name)] or {}) do
+        if augmentInfo.Match(value, { copy }) then
+            local copyKey = copy.key or tostring(copy)
+            if key and key ~= copyKey then ambiguous = true end
+            key, owned = copyKey, copy
+        end
+    end
+    return not ambiguous and owned or nil, ambiguous
+end
+
+local function inspection_target(set, slot, gear, source)
+    if gear then return gear, gear, source end
+    local value = current(set, slot)
+    if value then return value, owned_for(set, slot) end
+    local ghost = ghost_of(set, slot)
+    if ghost then
+        value = { kind = 'item', name = ghost.name, augs = ghost.augs, path = ghost.path, rank = ghost.rank }
+        source = 'Commented out in ' .. set.name
+    else
+        local view, cache = editorState.cache.view, editorState.cache
+        if view and view.set == set.name and view.ver == editorState.document.revision then
+            if cache.inspectionView ~= view then
+                local _, final = ctx.actions.Layers(view.rec)
+                cache.inspectionView, cache.inspectionFinal = view, final
+            end
+            local layer = cache.inspectionFinal[slot]
+            if layer then
+                value = { kind = 'item', name = layer.name }
+                source = (view.rec.expected and 'Expected result: ' or 'Recorded result: ')
+                    .. actions.SourceLabel(layer.by)
+            end
+        end
+        if not value then
+            local stats = cache.statSets
+            local preview = stats and stats.revision == editorState.document.revision and stats.loadouts[set.name]
+            local inherited = preview and preview.layered and preview.definitions[slot]
+            if inherited and inherited.kind == 'item' and not is_slot_word(inherited) then
+                return inherited, exact_owned(inherited), 'Inherited from ' .. preview.sources[slot]
+            end
+        end
+    end
+    if not value then return end
+    local copies = editorState.inventory.copiesByName[string.lower(value.name)] or {}
+    local owned = #copies == 1 and copies[1] or nil
+    return value, owned, source
+end
+
+local function inspect_item(setName, slot, value, owned, source)
+    local model = item_model(value, owned)
+    model.id = item_id(value.name)
+    if not owned and #(editorState.inventory.copiesByName[string.lower(value.name)] or {}) > 1 then
+        model.notes[#model.notes + 1] = 'Multiple copies: inspect a picker entry for exact augments.'
+    end
+    editorInspect.Pin(editorState, setName, slot, model, source)
+    feedback('Showing ' .. value.name .. ' below the gear grid.')
+end
+
+-- Grid comparisons need resolved definitions; numeric totals remain on demand.
+local function stat_cache()
+    local cache = editorState.cache.statSets
+    local layered = not editorState.ui.statLayers or editorState.ui.statLayers[1]
+    if not cache or cache.revision ~= editorState.document.revision
+        or cache.layered ~= layered or cache.base ~= editorState.ui.statBase then
+        cache = { revision = editorState.document.revision, layered = layered,
+            base = editorState.ui.statBase, sets = {}, loadouts = {}, count = 0 }
+        editorState.cache.statSets = cache
+    end
+    return cache
+end
+local function loadout_for(set)
+    local cache = stat_cache()
+    if not cache.loadouts[set.name] then
+        if cache.count >= 8 then cache.loadouts, cache.sets, cache.count = {}, {}, 0 end
+        cache.loadouts[set.name] = ctx.actions.Equipment(set, cache.layered and cache.base or nil, not cache.layered)
+        cache.count = cache.count + 1
+    end
+    return cache.loadouts[set.name]
+end
+local function set_stats(set)
+    local cache = stat_cache()
+    if cache.sets[set.name] then return cache.sets[set.name] end
+    local started = profiler.Start()
+    local equipment = loadout_for(set)
+    local items, inherited, ignored = {}, 0, 0
+    local coverage = { unchanged = 0, rules = 0, code = 0, pending = equipment.pending }
+    for _, slot in ipairs(SCREEN) do
+        local value = equipment.definitions[slot]
+        if not value then coverage.unchanged = coverage.unchanged + 1
+        elseif value.kind == 'code' then coverage.code = coverage.code + 1
+        elseif is_slot_word(value) then
+            coverage.rules = coverage.rules + 1
+            if string.lower(value.name) == 'ignore' then ignored = ignored + 1 end
+        elseif value.name then
+            local owned, ambiguous = exact_owned(value)
+            local item = item_model(value, owned)
+            item.slot = slot
+            item.unknownAugments = ambiguous or (owned and (owned.unreadable or (owned.progress
+                and owned.progress.unknown)))
+                or (not owned and (value.path ~= nil or value.rank ~= nil or (value.augs and value.augs ~= '')))
+            items[#items + 1] = item
+            if equipment.sources[slot] ~= set.name then inherited = inherited + 1 end
+        end
+    end
+    local model = statModel.Build(items, coverage)
+    model.definitions, model.sources = equipment.definitions, equipment.sources
+    model.layers, model.layered, model.layerWarnings = equipment.layers, equipment.layered, equipment.warnings
+    model.inherited, model.unresolved = inherited, coverage.unchanged + coverage.code + ignored
+    if model.layered then
+        model.coverage = string.format('%d items | %d inherited | %d unresolved slots', #items, inherited,
+            model.unresolved)
+    end
+    profiler.Finish('Set stats build', started)
+    cache.sets[set.name] = model
+    return model
+end
+
+local function differs(set, other, slot)
+    local left, right = loadout_for(set), loadout_for(other)
+    return editorInspect.Key(left.definitions[slot]) ~= editorInspect.Key(right.definitions[slot])
+end
+
+-- Where a piece dragged from the picker may go: its own slot, or the other ring / earring.
+local PAIR = {
+    Ring1 = { Ring1 = true, Ring2 = true },
+    Ring2 = { Ring1 = true, Ring2 = true },
+    Ear1 = { Ear1 = true, Ear2 = true },
+    Ear2 = { Ear1 = true, Ear2 = true },
+}
+setmetatable(PAIR, { __index = function(_, k) return { [k] = true } end, })
+
+-- A card's elemental resistances: its base text plus its augments (owned copy's, else the set's), cached per card.
+local resistCache = setmetatable({}, { __mode = 'k' })
+local function resist_of(v, owned)
+    local hit = resistCache[v]
+    if (hit ~= nil) and (hit.owned == owned) then return hit.list end
+    local text = describe(v.name) or ''
+    local augs = (owned ~= nil) and (owned.displayAugs or owned.augs) or nil
+    if (type(augs) == 'table') and (#augs > 0) then
+        text = text .. '\n' .. table.concat(augs, '\n')
+    elseif (type(v.augs) == 'string') and (v.augs ~= '') then
+        text = text .. '\n' .. v.augs
+    end
+    local list = itemTooltip.ElementTotals(text) or false
+    resistCache[v] = { owned = owned, list = list }
+    return list
+end
+
+local function draw_cell(set, slot)
+    local v = current(set, slot)
+    local selected = (editorState.selection.slot == slot)
+    local changed = (editorState.document.edits[set.name] ~= nil)
+        and (editorState.document.edits[set.name][slot] ~= nil)
+    local owned = owned_for(set, slot)
+    local rp = owned and owned.progress
+    imgui.PushStyleColor(
+        ImGuiCol_ChildBg, changed and palette.warnBg or ((rp and rp.unfinished) and palette.rpBg or palette.cell)
+    )
+    local cover = (
+        editorState.cache.view ~= nil
+        and editorState.cache.view.set == set.name
+        and editorState.cache.view.ver == editorState.document.revision and editorState.cache.cover ~= nil
+    )
+            and editorState.cache.cover[slot]
+        or nil -- a later set replaced this piece (action picked below)
+    local drop = (editorState.ui.drag ~= nil)
+        and ((v == nil) or (v.kind == 'item'))
+        and PAIR[editorState.ui.drag.slot][slot] -- a picker row dragged here fits
+    local other = cmp_of(set)
+    local diff = (other ~= nil) and differs(set, other, slot)
+    imgui.PushStyleColor(
+        ImGuiCol_Border,
+        (selected or drop) and palette.sel
+            or (
+                changed and palette.warn or diff and palette.aug
+                or ((rp and rp.unfinished) and palette.rp or ((cover ~= nil) and palette.override or palette.edge))
+            )
+    )
+    local focusBorder = selected and ImGuiStyleVar_ChildBorderSize ~= nil and imgui.PushStyleVar ~= nil
+    if focusBorder then imgui.PushStyleVar(ImGuiStyleVar_ChildBorderSize, 2) end
+    imgui.BeginChild('##gcedit_cell_' .. slot, { ctx.CELL_W, ctx.CELL_H }, CHILD_BORDERS, ImGuiWindowFlags_NoScrollbar)
+    imgui.TextColored(selected and palette.blue or (changed and palette.warn
+        or ((rp and rp.unfinished) and palette.rp or ((cover ~= nil) and palette.override or palette.dim))), slot)
+    local res = (v ~= nil) and (v.kind == 'item') and not is_slot_word(v) and resist_of(v, owned)
+    if res then -- its resistances, as the game's element icons: one value when they all match
+        imgui.SameLine(0, 8)
+        itemTooltip.ElementDots(imgui, res)
+        if (res.same ~= nil) then
+            imgui.SameLine(0, 2)
+            imgui.TextColored(palette.dim, ((res.same > 0) and '+' or '') .. res.same)
+        end
+    end
+    if (v ~= nil) and (v.kind == 'item') then
+        local bag, ok = where(v.name)
+        local t = is_slot_word(v) and 'Rule' or cardText.Bag(bag)
+        imgui.SameLine(ctx.CELL_W - text_w(t) - 14)
+        pill(
+            t,
+            is_slot_word(v) and palette.blue
+                or (bag == nil and palette.bad or (ok and palette.ok or palette.warn)),
+            is_slot_word(v) and palette.invBg
+                or (bag == nil and palette.badBg or (ok and palette.okBg or palette.warnBg))
+        )
+    end
+    local gh = (v == nil) and ghost_of(set, slot) or nil -- commented out in the file (/gcbuild)
+    draw_icon(
+        ((v ~= nil) and (v.kind == 'item') and item_id(v.name)) or ((gh ~= nil) and item_id(gh.name)) or nil, ctx.ICON
+    )
+    imgui.SameLine()
+    imgui.BeginGroup()
+    if gh ~= nil then
+        imgui.TextColored(palette.dim, cardText.Name(gh.name, ctx.CELL_W - ctx.ICON - 24, text_w))
+    elseif v == nil then
+        imgui.TextColored(changed and palette.warn or palette.dim, changed and 'Slot cleared' or 'Unchanged')
+    elseif v.kind == 'code' then
+        imgui.TextColored(palette.dim, cardText.Name('code: ' .. v.raw, ctx.CELL_W - ctx.ICON - 24, text_w))
+    else
+        imgui.TextColored(
+            is_slot_word(v) and palette.blue or palette.text, cardText.Name(v.name, ctx.CELL_W - ctx.ICON - 24, text_w)
+        )
+    end
+    imgui.EndGroup()
+    -- Fixed footer rows keep every card aligned, regardless of the item's name or metadata.
+    imgui.SetCursorPosY(ctx.CELL_H - 40)
+    imgui.Dummy({ 0, 0 }) -- register the new extent even when this card has no footer text
+    if v and v.kind == 'item' and not is_slot_word(v) then
+        local meta = {}
+        local path = v.path or (owned and owned.path)
+        if path then meta[#meta + 1] = path end
+        if rp and owned then meta[#meta + 1] = 'R' .. owned.rank .. (owned.cap and ('/' .. owned.cap) or '') end
+        if #meta == 0 and ((v.augs and v.augs ~= '') or (owned and #owned.augs > 0)) then
+            meta[#meta + 1] = 'Augmented'
+        end
+        if #meta > 0 then
+            imgui.TextColored(
+                (rp and rp.unfinished) and palette.rp or palette.dim,
+                cardText.Fit(table.concat(meta, ' / '), ctx.CELL_W - 16, text_w)
+            )
+        end
+    elseif gh then
+        imgui.TextColored(palette.dim, 'Not in this set')
+    elseif changed then
+        imgui.TextColored(palette.warn, 'Cleared on Save')
+    end
+    if changed or cover or (rp and rp.unfinished) then
+        imgui.SetCursorPosY(ctx.CELL_H - 22)
+        local status = cover and ((changed and 'Unsaved > ' or 'Replaced: ') .. cover.short)
+            or (changed and 'Unsaved' or 'Needs RP')
+        imgui.TextColored(changed and palette.warn or (cover and palette.override or palette.rp),
+            cardText.Fit(status, ctx.CELL_W - 16, text_w))
+    end
+    imgui.EndChild()
+    if focusBorder then imgui.PopStyleVar() end
+    if imgui.IsItemClicked(0) then
+        editorState.selection.slot = slot
+        editorState.selection.tab = 'gear'
+    end
+    if drop and (imgui.IsMouseDown ~= nil) and not imgui.IsMouseDown(0) and (imgui.GetMousePos ~= nil) then -- dropped
+        local mx, my = xy(imgui.GetMousePos())
+        local x1, y1 = xy(imgui.GetItemRectMin())
+        local x2, y2 = xy(imgui.GetItemRectMax())
+        if (mx ~= nil) and (x1 ~= nil) and (x2 ~= nil) and (mx >= x1) and (mx <= x2) and (my >= y1) and (my <= y2) then
+            edit(set, slot, editorState.ui.drag.g)
+            editorState.selection.slot, editorState.ui.drag = slot, nil
+        end
+    end
+    if imgui.IsItemClicked(1) then request_context('slot', set, slot) end
+    if imgui.IsItemHovered() and (gh ~= nil) then
+        set_tip(
+            wrap(
+                'Empty. The file has '
+                    .. gh.name
+                    .. ' commented out here ('
+                    .. (gh.why or 'no reason given')
+                    .. ').\nClick the slot and pick gear you own: it takes that line.', 60
+            )
+        )
+    elseif imgui.IsItemHovered() and (v ~= nil) and itemTooltip.HoverReady(imgui, 'card:' .. set.name .. ':' .. slot,
+        editorState.ui.frame) then
+        if v.kind == 'item' then
+            local bag, ok = where(v.name)
+            local comparison
+            if diff then
+                local w = set_stats(other).definitions[slot]
+                comparison = other.name .. ': ' .. ((w ~= nil) and (w.name or w.raw) or 'empty')
+            end
+            local tooltipStarted = profiler.Start()
+            itemTooltip.Draw(
+                imgui,
+                palette,
+                itemTooltip.Model(v, owned, {
+                    bag = bag,
+                    equippable = bag and ok,
+                    rule = is_slot_word(v),
+                    description = not is_slot_word(v) and describe(v.name) or nil,
+                    replacement = cover and cover.full,
+                    comparison = comparison,
+                })
+            )
+            profiler.Finish('Item tooltip', tooltipStarted)
+        else
+            set_tip(wrap(v.raw or '', 68))
+        end
+    elseif imgui.IsItemHovered() and v == nil and not diff then
+        set_tip('This set leaves the slot alone. Gear from an earlier layer stays equipped.')
+    elseif imgui.IsItemHovered() and diff then
+        local w = current(other, slot)
+        set_tip('Empty here.\n' .. other.name .. ' has: ' .. ((w ~= nil) and (w.name or w.raw) or 'nothing'))
+    end
+    imgui.PopStyleColor(2)
+end
+
+-- Equipped result: the recorded actions (gcaction.Rec*) that used this set; for the one picked, each slot's
+-- final piece and the set (or engine rule) it came from, then the order the sets went on, then sets it looked for.
+-- /gcedit: the Result view's tables (what an action wore, layer by layer).
+local TABLE_FLAGS =
+    bit.bor(ImGuiTableFlags_RowBg or 0, ImGuiTableFlags_Borders or 0, ImGuiTableFlags_SizingStretchProp or 0)
+
+local function draw_layer_view(set, V)
+    imgui.PushTextWrapPos(0)
+    imgui.TextUnformatted(V.head)
+    imgui.PopTextWrapPos()
+    if V.state ~= nil then
+        imgui.PushTextWrapPos(0)
+        imgui.TextColored(palette.dim, V.state)
+        if V.buffs ~= nil then imgui.TextColored(palette.dim, V.buffs) end
+        imgui.PopTextWrapPos()
+    end
+    local replacements = {}
+    for _, cover in pairs(V.cover) do
+        replacements[cover.short] = (replacements[cover.short] or 0) + 1
+    end
+    local sources = {}
+    for source in pairs(replacements) do
+        sources[#sources + 1] = source
+    end
+    table.sort(sources)
+    for _, source in ipairs(sources) do
+        local count = replacements[source]
+        local text = source == 'a lock' and (count .. ' locked slot' .. (count == 1 and '' or 's'))
+            or (source .. ' overrides ' .. count .. ' slot' .. (count == 1 and '' or 's'))
+        imgui.TextColored(palette.override, text)
+    end
+    if imgui.BeginTable('##gcedit_final', 3, TABLE_FLAGS) then
+        imgui.TableSetupColumn('Slot', 0, 0.6)
+        imgui.TableSetupColumn('What was worn', 0, 1.6)
+        imgui.TableSetupColumn('Source', 0, 1.6)
+        imgui.TableHeadersRow()
+        for _, row in ipairs(V.rows) do
+            imgui.TableNextRow()
+            imgui.TableNextColumn()
+            imgui.TextColored(palette.dim, row.slot)
+            imgui.TableNextColumn()
+            if row.worn == nil then
+                imgui.TextColored(palette.dim, 'no change')
+            else
+                imgui.TextUnformatted(row.worn)
+                if imgui.IsItemClicked(1) and row.worn ~= '(left empty)' then
+                    request_context('result', set, row.slot, { kind = 'item', name = row.worn }, row.src)
+                end
+            end
+            imgui.TableNextColumn()
+            imgui.TextColored(palette[row.sourceRole], row.src)
+            if row.replacedName ~= nil then
+                imgui.PushTextWrapPos(0) -- wraps at the column's edge
+                imgui.TextColored(
+                    palette.override, 'Replaced ' .. row.replacedName .. (row.locked and ' (locked)' or '')
+                )
+                imgui.PopTextWrapPos()
+            end
+        end
+        imgui.EndTable()
+    end
+    if V.still ~= nil then
+        imgui.PushTextWrapPos(0)
+        imgui.TextColored(palette.dim, 'Unchanged slots: ' .. V.still)
+        imgui.PopTextWrapPos()
+    end
+
+    imgui.Spacing()
+    if imgui.CollapsingHeader('Equip order and reasons##gcedit_order', 0) then
+        imgui.PushTextWrapPos(0)
+        for _, o in ipairs(V.order) do
+            imgui.TextColored(o.mine and palette.blue or palette.text, o.title)
+            if imgui.IsItemHovered() then set_tip(o.rawSource or o.title) end
+            imgui.Indent(18)
+            imgui.TextColored(palette.dim, o.why)
+            if o.won ~= nil then imgui.TextColored(palette.ok, o.won) end
+            if o.same ~= nil then imgui.TextColored(palette.dim, o.same) end
+            if o.lost ~= nil then imgui.TextColored(palette.override, o.lost) end
+            imgui.Unindent(18)
+        end
+        imgui.PopTextWrapPos()
+    end
+    if (#V.missing + #V.variants > 0) and imgui.CollapsingHeader('Set suggestions (' .. (#V.missing + #V.variants)
+        .. ')##gcedit_suggestions', 0) then
+        imgui.Spacing()
+        imgui.TextColored(palette.dim, 'Optional set definitions for this action:')
+        help(
+            'Each says why it was looked for and what goes on without it. You only need one if it should change gear.\n'
+                .. 'Make adds an empty set to the list; nothing is saved until Save + reload.'
+        )
+        local made = nil
+        local function row(m, i)
+            if imgui.SmallButton('Make##gcmiss' .. i) then made = m.name end
+            imgui.SameLine()
+            imgui.TextUnformatted(m.name)
+            imgui.Indent(52)
+            imgui.PushTextWrapPos(0)
+            imgui.TextColored(palette.dim, m.why)
+            imgui.PopTextWrapPos()
+            imgui.Unindent(52)
+        end
+        for i, m in ipairs(V.missing) do
+            row(m, i)
+        end
+        if #V.variants > 0 then
+            imgui.TextColored(palette.dim, 'Optional variants (only if they need different gear):')
+            for i, m in ipairs(V.variants) do
+                row(m, 100 + i)
+            end
+        end
+        if made ~= nil then
+            make_set(made, nil, true)
+        end -- after the loop: it rebuilds V.missing
+    end
+end
+
+---------------------------------------------------------------------------------------------------------------------
+-- Exact set names to omit from the suggestions view. Configure with settings.EditorIgnoreSuggestions = T{'Singing'}.
+local function ignored_suggestion_names()
+    local out = {}
+    local function add(list)
+        if type(list) ~= 'table' then return end
+        for key, value in pairs(list) do
+            local name = (type(key) == 'number') and value or ((value == true) and key or nil)
+            if type(name) == 'string' and name ~= '' then out[string.lower(name)] = true end
+        end
+    end
+    if ctx.gearEngine ~= nil and not editorState.document.inactive then
+        add((ctx.gearEngine.settings ~= nil) and ctx.gearEngine.settings.EditorIgnoreSuggestions or nil)
+        add(ctx.gearEngine.EditorIgnoreSuggestions) -- optional per-job list
+    end
+    return out
+end
+
+---------------------------------------------------------------------------------------------------------------------
+local function draw_layers(set)
+    local records = not editorState.document.inactive and GcRecords or nil
+    editorState.cache.cover = nil
+    imgui.Spacing()
+    imgui.Separator()
+    imgui.TextUnformatted('Equipped result')
+    help(
+        'Each line is one action:\n'
+            .. '- seen: it happened since load. Shows everything that went on, engine rules too.\n'
+            .. '- expected: not done yet. Worked out from your sets and the modes now.\n'
+            .. 'Pick one:\n'
+            .. '- the table: what each slot ends with, and the set that put it there (by number)\n'
+            .. '- the list under it: the order the sets went on, and why each one did'
+    )
+    -- the records list, rebuilt only when a new record lands or the set / checkbox changes
+    local rkey = set.name
+        .. '\0'
+        .. tostring(editorState.ui.allRecs[1])
+        .. '\0' .. ((records ~= nil) and ((records.n or 0) .. '/' .. #records.order) or '-')
+    if editorState.cache.recsKey ~= rkey then
+        local recs = ctx.actions.RecordsFor(set.name)
+        if editorState.ui.allRecs[1] and (records ~= nil) then
+            recs = {}
+            for _, key in ipairs(records.order) do
+                local r = records.byKey[key]
+                if (r ~= nil) and (r.job == editorState.profile.job) then recs[#recs + 1] = r end
+            end
+            table.sort(recs, function(x, y) return x.time > y.time end)
+        end
+        editorState.cache.recsKey, editorState.cache.recs = rkey, recs
+    end
+    local recs = editorState.cache.recs
+    -- expected: the set's own action, from the sets and modes now, while it has not been seen since load
+    local ekey = set.name
+        .. '\0'
+        .. editorState.document.revision
+        .. '\0'
+        .. ((gcdisplay ~= nil) and gcdisplay.Version() or '-') -- every mode change bumps it
+        .. '\0' .. ((records ~= nil) and tostring(records.n) or '-')
+    if editorState.cache.expKey ~= ekey then
+        local e = ctx.actions.Expected(set)
+        if (e ~= nil) and (e.seenKey ~= nil) and (records ~= nil) and (records.byKey[tostring(editorState.profile.job)
+            .. ' ' .. e.seenKey] ~= nil) then
+            e = nil
+        end
+        editorState.cache.expKey, editorState.cache.exp = ekey, e
+    end
+    local exp = editorState.cache.exp
+    imgui.Checkbox('Show every action, not only ones that used ' .. set.name .. '##gcedit_all', editorState.ui.allRecs)
+    if (#recs == 0) and (exp == nil) then
+        imgui.PushTextWrapPos(0)
+        imgui.TextColored(
+            palette.dim,
+            'Nothing yet: '
+                .. set.name .. ' has not been worn since LuAshitacast loaded. Use it in game, then look here.'
+        )
+        imgui.PopTextWrapPos()
+        return
+    end
+    local pick = nil
+    if editorState.cache.recFor == set.name then
+        if (exp ~= nil) and (exp.key == editorState.cache.recKey) then pick = exp end
+        for _, r in ipairs(recs) do
+            if r.key == editorState.cache.recKey then pick = r end
+        end
+    end
+    if (pick == nil) and (exp ~= nil) then
+        pick = exp
+    end -- not seen yet: what it would put on
+    if pick == nil then -- first look at a set: the action where it kept the most slots (Idle: standing idle)
+        local best = -1
+        for _, r in ipairs(recs) do
+            local n = 0
+            local _, fin = ctx.actions.Layers(r)
+            for _, f in pairs(fin) do
+                if ctx.actions.IsSetLabel(f.by, set.name) then n = n + 1 end
+            end
+            if n > best then best, pick = n, r end
+        end
+    end
+    editorState.cache.recKey, editorState.cache.recFor = pick.key, set.name
+    local now = os.time()
+    if editorState.cache.agoAt ~= now then
+        editorState.cache.agoAt, editorState.cache.agoText = now, {}
+    end -- the 'ago' texts, once a second
+    local rows = #recs + ((exp ~= nil) and 1 or 0)
+    imgui.BeginChild('##gcedit_recs', { 0, 22 * math.min(rows, 4) + 8 }, CHILD_BORDERS)
+    if exp ~= nil then
+        if imgui.Selectable(ctx.actions.ActionLabel(exp) .. '##gcexp', exp == pick) then
+            editorState.cache.recKey = exp.key
+            pick = exp
+        end
+        imgui.SameLine()
+        imgui.TextColored(palette.blue, 'expected: not seen yet')
+        if imgui.IsItemHovered() then
+            set_tip(
+                wrap(
+                    'Not recorded: worked out from your sets and the modes now.\nUse it in game and a seen line takes its place.',
+                    60
+                )
+            )
+        end
+    end
+    for _, r in ipairs(recs) do
+        r.rowLabel = r.rowLabel or (ctx.actions.ActionLabel(r) .. '##gcrec' .. r.key)
+        if imgui.Selectable(r.rowLabel, r == pick) then
+            editorState.cache.recKey = r.key
+            pick = r
+        end
+        imgui.SameLine()
+        imgui.TextColored(palette.ok, 'seen')
+        imgui.SameLine()
+        local t = editorState.cache.agoText[r]
+        if t == nil then
+            t = ago(r.time) .. ((r.tp ~= nil) and ('  at ' .. r.tp .. ' TP') or '')
+            editorState.cache.agoText[r] = t
+        end
+        imgui.TextColored(palette.dim, t)
+    end
+    imgui.EndChild()
+
+    -- everything below depends only on the record, the set and the set list: worked out once, drawn every frame
+    local V = editorState.cache.view
+    if (V == nil) or (V.rec ~= pick) or (V.set ~= set.name) or (V.ver ~= editorState.document.revision) then
+        local started = profiler.Start()
+        V = ctx.actions.View(set, pick)
+        profiler.Finish('Action view rebuild', started)
+        editorState.cache.view = V
+    end
+    editorState.cache.cover = V.cover
+    draw_layer_view(set, V)
+end
+
+-- Shared entries keep More and right-click set actions identical.
+
+local function set_action_entries(set)
+    if set.new then
+        if imgui.Button('Rename set...##gcedit_new') then
+            editorState.ui.requestRenameSet = set.name
+            imgui.CloseCurrentPopup()
+        end
+        if red_button('Discard new set##gcedit') then
+            drop_new(set)
+            imgui.CloseCurrentPopup()
+            return true
+        end
+    else
+        local count = 0
+        for _ in pairs(editorState.document.edits[set.name] or NONE) do count = count + 1 end
+        local disabled = count == 0 and imgui.BeginDisabled ~= nil
+        if disabled then imgui.BeginDisabled() end
+        if imgui.Button('Revert set##gcedit') and count > 0 then
+            editorState.document.edits[set.name] = nil
+            editorState.document.revision = editorState.document.revision + 1
+            feedback('Reverted unsaved slot edits in ' .. set.name .. '.')
+            imgui.CloseCurrentPopup()
+        end
+        if disabled then imgui.EndDisabled() end
+        imgui.Separator()
+        if (editorState.document.renames or {})[set.name] then
+            if imgui.Button('Cancel rename##gcedit') then
+                ctx.stage_rename(set.name, nil)
+                feedback('Cancelled renaming ' .. set.name .. '.')
+                imgui.CloseCurrentPopup()
+            end
+        elseif not editorState.document.deleted[set.name] and imgui.Button('Rename set...##gcedit') then
+            editorState.ui.requestRenameSet = set.name
+            imgui.CloseCurrentPopup()
+        end
+        if editorState.document.deleted[set.name] then
+            if imgui.Button('Undo deletion##context') then
+                editorState.document.deleted[set.name] = nil
+                editorState.document.revision = editorState.document.revision + 1
+                feedback('Cancelled deletion of ' .. set.name .. '.')
+                imgui.CloseCurrentPopup()
+            end
+        elseif red_button('Delete set...##gcedit') then
+            editorState.ui.requestDeleteSet = set.name
+            imgui.CloseCurrentPopup()
+        end
+    end
+    return false
+end
+
+local function draw_set_actions(set)
+    if imgui.Button('More...##set_actions') then imgui.OpenPopup('##set_actions_menu') end
+    local discarded = false
+    if imgui.BeginPopup('##set_actions_menu') then
+        discarded = set_action_entries(set)
+        imgui.EndPopup()
+    end
+    return discarded
+end
+
+local function draw_set(set)
+    if (editorState.selection.back ~= nil) and (#editorState.selection.back > 0) then
+        local prev = editorState.selection.back[#editorState.selection.back]
+        if imgui.SmallButton('< Back to ' .. prev .. '##gcedit_back') then
+            table.remove(editorState.selection.back)
+            editorPreferences.Select(editorState, prev, nil, 'action')
+            return
+        end
+        imgui.SameLine(0, 12)
+    end
+    imgui.TextUnformatted(set.bracket and ("['" .. set.name .. "']") or set.name)
+    editorPanels.SameLineIfFits(imgui, 110)
+    if imgui.SmallButton( (editorState.preferences.favorites[set.name] and 'Unfavorite' or 'Favorite')
+        .. '##set_favorite' ) then
+        editorPreferences.ToggleFavorite(editorState.preferences, set.name)
+        save_preferences()
+        feedback('Updated favorite: ' .. set.name .. '.')
+    end
+    if by_name(set) then tag('worn by name', palette.blue) end
+    if (editorState.document.renames or {})[set.name] then
+        tag('renamed to ' .. editorState.document.renames[set.name] .. ' on Save', palette.warn)
+    end
+    if set.new then
+        tag('new: written on Save', palette.warn)
+        local mode = pending_weapon_mode(set)
+        if mode then
+            local plan = registration_plan()
+            imgui.TextColored(plan.ok and palette.blue or palette.bad,
+                plan.ok and ('Weapon cycle: ' .. mode .. ' will be added on Save.')
+                    or ('Cannot register ' .. mode .. ': no gcinclude.Initialize() line in this file.'))
+        end
+    end
+    local unfinished = set_status(set).unfinished
+    if #unfinished > 0 then
+        imgui.PushStyleColor(ImGuiCol_Text, palette.rp)
+        if imgui.SmallButton('Needs RP: ' .. #unfinished .. ' slot' .. (#unfinished == 1 and '' or 's') .. '##rp') then
+            imgui.OpenPopup('##rp_details')
+        end
+        imgui.PopStyleColor()
+        if imgui.IsItemHovered() then set_tip(table.concat(unfinished, '\n')) end
+    end
+
+    if imgui.BeginPopup('##rp_details') then
+        imgui.TextUnformatted('Unfinished gear in this set')
+        imgui.BeginChild('##rp_list', { 440, 300 }, 0)
+        local seen = {}
+        for _, slot in ipairs(SCREEN) do
+            local g = owned_for(set, slot)
+            if g and g.progress and g.progress.unfinished and not seen[g.key] then
+                seen[g.key] = true
+                imgui.TextColored(palette.rp, g.name .. ' - R' .. g.rank .. '/' .. tostring(g.cap or '?'))
+                for index, use in ipairs(rp_uses(g)) do
+                    if imgui.Selectable(use.set .. ' / ' .. use.slot .. '##rp_' .. slot .. '_' .. index) then
+                        go_to(use.set, use.slot, 'gear')
+                        imgui.CloseCurrentPopup()
+                    end
+                end
+                imgui.Separator()
+            end
+        end
+        imgui.EndChild()
+        imgui.EndPopup()
+    end
+    local when = ctx.actions.When(set)
+    if when ~= nil then
+        local short = string.find(when, 'No built-in trigger', 1, true) and 'Job-defined set'
+            or (string.match(when, '^(.-)%. ') or when)
+        if set.name == 'BluMagical' then
+            short = 'Magical Blue Magic (midcast)'
+            when =
+                'In the standard BLU profile, this layers over Midcast for Blue Magic spells outside the physical spell list. Later spell-specific sets and overlays can replace its slots.'
+        elseif set.name == 'BluPhysical' then
+            short = 'Physical Blue Magic (midcast)'
+            when =
+                'In the standard BLU profile, this layers over Midcast for spells in the physical Blue Magic list. Later spell-specific sets and overlays can replace its slots.'
+        end
+        imgui.TextColored(
+            palette.blue,
+            cardText.Fit(
+                'Used for: ' .. short:gsub('^When ', ''):gsub('^While ', '') .. '  (?)',
+                ctx.CELL_W * ctx.GRID_COLUMNS + 8, text_w
+            )
+        )
+        if imgui.IsItemHovered() then set_tip(wrap(when, 68)) end
+    end
+    if set.note ~= nil then -- the job file's own note on the set (Foe = { -- Lullaby keeps your weapons)
+        imgui.TextColored(palette.dim, cardText.Fit('Note: ' .. set.note, ctx.CELL_W * ctx.GRID_COLUMNS + 8, text_w))
+        if imgui.IsItemHovered() then set_tip(wrap('From the job file, beside ' .. set.name .. ':\n' .. set.note, 68)) end
+    end
+    if (editorState.document.deleted or {})[set.name] then
+        imgui.TextColored(palette.bad, 'This set will be deleted on Save + reload.')
+        if imgui.Button('Undo deletion##gcedit') then
+            editorState.document.deleted[set.name] = nil
+            editorState.document.revision = editorState.document.revision + 1
+            feedback('Cancelled deletion of ' .. set.name .. '.')
+        end
+        return
+    end
+    if set.code ~= nil then
+        imgui.TextColored(palette.dim, 'Written as code, not a table of slots: edit it in the file.')
+        imgui.TextColored(palette.dim, string.sub(set.code, 1, 120))
+        return
+    end
+    if set.extra then
+        imgui.TextColored(palette.dim, 'Holds more than slots (a set per buff, a nested set): edit it in the file.')
+        return
+    end
+    local gaps = empty_armor(set)
+    if (gaps ~= nil) and (#gaps > 0) then
+        imgui.PushTextWrapPos(0)
+        imgui.TextColored(
+            (set.name == 'Tp_Default') and palette.dim or palette.warn,
+            'Empty: ' .. table.concat(gaps, ' ') .. ' (' .. BASE[set.name] .. ')'
+        )
+        imgui.PopTextWrapPos()
+    end
+    local other = cmp_of(set)
+    if other ~= nil then
+        local n = 0
+        for _, slot in ipairs(SCREEN) do
+            if differs(set, other, slot) then n = n + 1 end
+        end
+        imgui.TextColored(
+            palette.aug,
+            string.format(
+                'Comparing with %s: %d slot%s differ%s', other.name, n, (n == 1) and '' or 's', (n == 1) and 's' or ''
+            )
+        )
+        imgui.SameLine()
+        if imgui.SmallButton('Stop##gcedit_cmp') then editorState.ui.cmp = nil end
+    end
+    if editorState.history.entries and #editorState.history.entries > 0 then
+        if imgui.Button('Undo edit##gcedit') then
+            local u = table.remove(editorState.history.entries)
+            if editorState.document.model.byName[u.set] and not editorState.document.deleted[u.set] then
+                editorState.document.edits[u.set] = editorState.document.edits[u.set] or {}
+                editorState.document.edits[u.set][u.slot] = u.previous
+                if next(editorState.document.edits[u.set]) == nil then editorState.document.edits[u.set] = nil end
+                editorState.document.revision = editorState.document.revision + 1
+                editorState.history.revision = editorState.document.revision
+                editorPreferences.Select(editorState, u.set, u.slot)
+                feedback('Undid the last edit to ' .. u.set .. ' / ' .. u.slot .. '.')
+            end
+        end
+        editorPanels.SameLineIfFits(imgui, 140)
+    end
+    if imgui.Button('Use worn##gcedit') then
+        use_worn(set)
+        feedback('Copied worn gear into ' .. set.name .. ' (unsaved).')
+    end
+    editorPanels.SameLineIfFits(imgui, 140)
+    if imgui.Button('Copy from##gcedit') then
+        editorState.ui.copyFind[1], editorState.ui.pickMode = '', 'copy'
+        editorState.ui.openSetChooser = true
+    end
+    if imgui.IsItemHovered() then
+        set_tip('Fill this set from another (Dt, Idle...), then change only what differs.')
+    end
+    editorPanels.SameLineIfFits(imgui, 140)
+    if imgui.Button('Compare##gcedit') then
+        editorState.ui.copyFind[1], editorState.ui.pickMode = '', 'compare'
+        editorState.ui.openSetChooser = true
+    end
+    if imgui.IsItemHovered() then set_tip('Outline the slots where this set and another differ.') end
+    editorPanels.SameLineIfFits(imgui, 140)
+    if draw_set_actions(set) then return end
+    help(
+        '- Click a slot: pick gear for it on the right.\n'
+            .. '- Right-click a slot: inspect its item, choose gear, undo or clear.\n'
+            .. 'Bag colour:\n'
+            .. '- green: you can equip from it\n'
+            .. '- orange: move it to a wardrobe first\n'
+            .. '- red: you do not own it\n'
+            .. 'Aug / Path: the file lists augments (hover the slot).\n'
+            .. 'Blue outline: the slot being edited. Amber: unsaved changes. Violet: unfinished RP.\n'
+            .. 'An unsaved card keeps its amber fill while selected. Path/rank has its own footer row.\n'
+            .. 'Replaced labels (Unsaved > source on an edited slot) use the action selected on the right.'
+    )
+    imgui.Spacing()
+    for i, slot in ipairs(SCREEN) do
+        if (i - 1) % ctx.GRID_COLUMNS ~= 0 then imgui.SameLine() end
+        draw_cell(set, slot)
+    end
+    if set.oneLine then
+        imgui.TextColored(palette.dim, 'This set is on one line: saving rewrites it one slot a line.')
+    end
+end
+
+-- The game's modes now, for the circumstance boxes.
+local function wi_from_game()
+    local wi = editorState.ui.wi
+    local ok = not editorState.document.inactive and (gcdisplay ~= nil)
+    local cur = ok and gcdisplay.GetCycle('MeleeSet') or nil
+    for _, m in ipairs(ok and (gcdisplay.GetCycleValues('MeleeSet') or {}) or {}) do
+        wi.ms[m] = { m == cur }
+    end
+    wi.high[1] = ok and (gcdisplay.GetCycle('WsSet') == 'High') or false
+    wi.dt[1] = ok and (gcdisplay.GetToggle('DTset') == true) or false
+    wi.hoxne[1] = ok and (gcdisplay.GetCycle('Hoxne') == 'Locked') or false
+    wi.proc[1] = ok and (gcdisplay.GetToggle('PROC') == true) or false
+end
+
+-- The /mset modes: the game's list, plus modes added here and not saved yet.
+-- the file's own /mset list (gcinclude.MeleeModes = {...}), else the engine's; then + New mode's
+local function melee_modes()
+    if (editorState.cache.modes ~= nil) and (editorState.cache.modesN == #editorState.document.newModes) then
+        return editorState.cache.modes
+    end -- read from the file once, not every frame
+    local list = {}
+    local own = (editorState.document.model.text ~= nil)
+            and string.match(editorState.document.model.text, '\n%s*gcinclude%.MeleeModes%s*=%s*(%b{})') or nil
+    if own ~= nil then
+        for m in string.gmatch(own, "'([^']+)'") do
+            list[#list + 1] = m
+        end
+    end
+    if #list == 0 then
+        list = { 'Default', 'SubtleBlow', 'Acc' }
+    end -- gcinclude.SetVariables' list
+    for _, m in ipairs(editorState.document.newModes) do
+        list[#list + 1] = m
+    end
+    editorState.cache.modes, editorState.cache.modesN = list, #editorState.document.newModes
+    return list
+end
+
+-- A group's circumstances, against the game now: true when every one is on (the action's own state counts as on).
+local function conds_on(conds, now)
+    for _, c in ipairs(conds) do
+        local m = string.match(c, '^melee mode (.+)$')
+        local im = string.match(c, '^idle mode (.+)$')
+        local ok
+        if (c == 'engaged') or (c == 'idle') then
+            ok = true
+        elseif m ~= nil then
+            ok = (now.mset == m)
+        elseif im ~= nil then
+            ok = (now.idleset == im)
+        elseif c == 'WS high-buff mode' then
+            ok = (now.wsset == 'High')
+        elseif c == 'DT mode' then
+            ok = now.dt
+        elseif c == 'proc mode' then
+            ok = now.proc
+        elseif c == 'Hoxne' then
+            ok = (now.hoxne == 'Locked')
+        else
+            ok = false
+        end -- buffs up, cast on whom, a burst: not known here
+        if not ok then return false end
+    end
+    return true
+end
+
+local function draw_new_mode()
+    if not imgui.BeginPopup('##gcedit_newmode') then return end
+    imgui.TextUnformatted('New melee mode (/mset)')
+    imgui.PushItemWidth(260)
+    imgui.InputTextWithHint('##gcedit_modename', 'Name: Hybrid, MidAcc...', editorState.ui.newMode, 24)
+    imgui.PopItemWidth()
+    local name = string.match(editorState.ui.newMode[1] or '', '^%s*(.-)%s*$')
+    local clash = false
+    for _, m in ipairs(melee_modes()) do
+        if string.lower(m) == string.lower(name) then clash = true end
+    end
+    local okName = (string.match(name, '^%a[%w]*$') ~= nil)
+    imgui.PushTextWrapPos(300)
+    imgui.TextColored(
+        palette.dim,
+        "Save adds it to gcinclude.MeleeModes in your file. /mset then cycles to it, and every set named <set>_<mode> (Tp_, Ws_, a weapon skill's) goes on over its base."
+    )
+    if clash then
+        imgui.TextColored(palette.bad, 'That mode exists.')
+    elseif (name ~= '') and not okName then
+        imgui.TextColored(palette.bad, 'Letters and digits only (no spaces or _).')
+    end
+    imgui.PopTextWrapPos()
+    if imgui.Button('Add##gcedit_newmode') and okName and not clash then
+        editorState.document.newModes[#editorState.document.newModes + 1] = name
+        editorState.ui.newMode[1] = ''
+        editorState.document.revision = editorState.document.revision + 1
+        imgui.CloseCurrentPopup()
+    end
+    imgui.SameLine()
+    if imgui.Button('Cancel##gcedit_newmode') then imgui.CloseCurrentPopup() end
+    imgui.EndPopup()
+end
+
+    return { describe = describe, cmp_of = cmp_of, inspection_target = inspection_target, inspect_item = inspect_item,
+        set_stats = set_stats, ignored_suggestion_names = ignored_suggestion_names, draw_layers = draw_layers,
+        set_action_entries = set_action_entries, draw_set = draw_set, wi_from_game = wi_from_game,
+        melee_modes = melee_modes, conds_on = conds_on, draw_new_mode = draw_new_mode }
+end

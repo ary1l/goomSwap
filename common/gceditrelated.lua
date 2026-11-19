@@ -1,0 +1,1188 @@
+-- /gcedit: the Related and To fill tabs, and renaming sets.
+return function(
+    LAC_WORDS, NONE, SCREEN, allItems, canDraw, cardText, choose_item, clip_begin, clip_drawn, clip_end, clip_skip,
+    conds_on, ctx, current, describe, draw_icon, draw_new_mode, draw_png, edit, editorPanels, editorPreferences,
+    editorState, feedback, fits, ghost_of, go_to, group_of, has_set, help, help_icon, ignored_suggestion_names,
+    imgui, index_all_items, inspect_item, inspection_target, itemTooltip, make_button, make_set, melee_modes,
+    owned_for, palette, picker, pill, profiler, red_button, request_context, saveReview, save_preferences, setFile,
+    set_action_entries, set_tip, tag, text_w, undo_slot, where, wi_from_game, wrap, xy
+)
+-- Copy as a weapon set: this set's slots as a new <name>_<weapon> (Tp_Default -> Tp_Chango, Tp_Acc ->
+-- Tp_Chango_Acc), or by weapon type (_2h, _1h); then change what differs. Not written until Save.
+local function draw_weapon_copies(set)
+    if (set.code ~= nil) or set.extra or editorState.document.deleted[set.name] then return end
+    local targets = ctx.actions.WeaponModes()
+    targets[#targets + 1], targets[#targets + 2] = '2h', '1h'
+    local shown = 0
+    for _, w in ipairs(targets) do
+        local name = ctx.actions.VariantName(set, w)
+        if (name ~= nil) and not has_set(name) then
+            if shown == 0 then
+                imgui.Separator()
+                imgui.TextColored(palette.dim, 'Copy as a weapon set:')
+            end
+            if (shown % 3) ~= 0 then imgui.SameLine() end
+            shown = shown + 1
+            if imgui.SmallButton(name .. '##copyas') then
+                make_set(name, set)
+                imgui.CloseCurrentPopup()
+            end
+            if imgui.IsItemHovered() then
+                set_tip(((w == '2h') or (w == '1h'))
+                    and ('Worn over ' .. set.name .. ' with a ' .. ((w == '2h') and 'two' or 'one')
+                        .. '-handed weapon that has no set of its own here.')
+                    or ('Worn over ' .. set.name .. ' while /wm ' .. w .. ' is on.'))
+            end
+        end
+    end
+end
+
+-- /wm order as Save writes it: your staged one, else the file's (None is left out: it keeps its place), then the
+-- modes new Weapon_ sets add.
+local function wm_order()
+    local doc = editorState.document
+    if doc.wmOrder ~= nil then return doc.wmOrder end
+    local out, seen = {}, {}
+    local function add(m)
+        if (m ~= nil) and (string.lower(m) ~= 'none') and not seen[string.lower(m)] then
+            seen[string.lower(m)], out[#out + 1] = true, m
+        end
+    end
+    for _, m in ipairs(setFile.WeaponModes(doc.model.text or '') or {}) do add(m) end
+    for _, s in ipairs(doc.newSets) do add(string.match(s.name, '^Weapon_([^_]+)$')) end
+    return out
+end
+
+-- A Weapon_<mode> set's place in the /wm cycle: earlier or later, written on Save.
+local function draw_wm_order(set)
+    local mode = string.match(set.name, '^Weapon_([^_]+)$')
+    if mode == nil then return end
+    local order, at = wm_order(), nil
+    for i, m in ipairs(order) do
+        if string.lower(m) == string.lower(mode) then at = i end
+    end
+    if at == nil then return end
+    imgui.Separator()
+    imgui.TextColored(palette.dim, '/wm order: ' .. table.concat(order, ', '))
+    for _, mv in ipairs({ { 'Earlier in /wm', -1 }, { 'Later in /wm', 1 } }) do
+        if mv[2] > 0 then imgui.SameLine() end
+        local to = at + mv[2]
+        if imgui.SmallButton(mv[1] .. '##wmorder') and (to >= 1) and (to <= #order) then
+            local new = {}
+            for i, m in ipairs(order) do new[i] = m end
+            new[at], new[to] = new[to], new[at]
+            editorState.document.wmOrder = nil
+            local same = (#wm_order() == #new)
+            for i, m in ipairs(wm_order()) do
+                if m ~= new[i] then same = false end
+            end
+            editorState.document.wmOrder = (not same) and new or nil -- back to the file's: nothing to save
+            feedback('/wm order: ' .. table.concat(new, ', ') .. (same and '' or ' (written on Save)') .. '.')
+        end
+    end
+end
+
+-- Every set GoomSwap could put on for this set's action, grouped by what has to be on for it, have or missing.
+local function draw_over(set)
+    local wi = editorState.ui.wi
+    local values = melee_modes()
+    local now = ctx.actions.ModesNow()
+    -- the (?) first: after a wrapped line it would land in the middle of it
+    help_icon(
+        'Every set GoomSwap and your job file look for with this one, numbered in the order they go on, grouped by what has to be on.\n'
+            .. '- job file: your job file names it (hover: the line). Its conditions are read from the file, not run.\n'
+            .. "- (on now): that group's modes are on in game right now.\n"
+            .. '- have: click to open that set; < Back over the slots returns.\n'
+            .. '- Make: adds it empty; Make all: every missing one (saved on Save + reload).\n'
+            .. "- Ignore irrelevant candidates by exact set name in settings.EditorIgnoreSuggestions, e.g. T{'Singing'}.\n"
+            .. '- + New mode: a /mset mode of your own; its sets are named <set>_<mode>.\n'
+            .. 'Hover a name: the set it goes on over.'
+    )
+    imgui.SameLine()
+    imgui.PushTextWrapPos(0)
+    imgui.TextColored(
+        palette.dim,
+        'The sets that go on together with '
+            .. set.name .. ', numbered in the order they go on (a later one wins a slot).'
+    )
+    imgui.PopTextWrapPos()
+    -- which modes to list: every one (default), only what is on in game now, or ticked by hand
+    local function show(label, key)
+        local on = (editorState.ui.overShow == key)
+        imgui.PushStyleColor(ImGuiCol_Button, on and palette.selBg or palette.btn)
+        imgui.PushStyleColor(ImGuiCol_Text, on and palette.blue or palette.dim)
+        if imgui.SmallButton(label .. '##gcwi_show_' .. key) then
+            editorState.ui.overShow = key
+            if key == 'pick' then wi_from_game() end
+        end
+        imgui.PopStyleColor(2)
+    end
+    imgui.TextColored(palette.dim, 'Show:')
+    imgui.SameLine()
+    show('Every mode', 'all')
+    imgui.SameLine()
+    if not editorState.document.inactive then show('Modes on now', 'now') end
+    imgui.SameLine()
+    show('Pick modes', 'pick')
+    imgui.SameLine(0, 16)
+    if imgui.SmallButton('+ New mode##gcedit') then
+        editorState.ui.newMode[1] = ''
+        imgui.OpenPopup('##gcedit_newmode')
+    end
+    draw_new_mode()
+    if #editorState.document.newModes > 0 then
+        imgui.TextColored(
+            palette.warn,
+            'New mode'
+                .. ((#editorState.document.newModes > 1) and 's' or '')
+                .. ' (written on Save): ' .. table.concat(editorState.document.newModes, ', ')
+        )
+    end
+    local o = { msets = {}, buffs = {} }
+    if editorState.ui.overShow == 'all' then
+        for _, m in ipairs(values) do
+            if m ~= 'Default' then o.msets[#o.msets + 1] = m end
+        end
+        o.high, o.dt, o.proc, o.hoxne = true, true, true, true -- every option, to make or leave
+    elseif editorState.ui.overShow == 'now' then
+        if (now.mset ~= nil) and (now.mset ~= 'Default') then o.msets[1] = now.mset end
+        o.high, o.dt, o.proc, o.hoxne = (now.wsset == 'High'), now.dt, now.proc, (now.hoxne == 'Locked')
+    else
+        for _, m in ipairs(values) do
+            if m ~= 'Default' then
+                wi.ms[m] = wi.ms[m] or { false }
+                if wi.ms[m][1] then o.msets[#o.msets + 1] = m end
+            end
+        end
+        for b in string.gmatch(wi.buffs[1] or '', '[^,]+') do
+            local t = string.match(b, '^%s*(.-)%s*$')
+            if t ~= '' then o.buffs[#o.buffs + 1] = t end
+        end
+        o.high, o.dt, o.hoxne, o.proc = wi.high[1], wi.dt[1], wi.hoxne[1], wi.proc[1]
+        imgui.TextColored(palette.dim, 'Melee mode (/mset):')
+        for _, m in ipairs(values) do
+            if m ~= 'Default' then
+                imgui.SameLine()
+                imgui.Checkbox(m .. '##gcwi_' .. m, wi.ms[m])
+            end
+        end
+        imgui.Checkbox('DT mode (/dt)##gcwi', wi.dt)
+        imgui.SameLine()
+        imgui.Checkbox('WS high-buff mode (/wsset high)##gcwi', wi.high)
+        imgui.Checkbox('Hoxne Ampulla (/hoxne)##gcwi', wi.hoxne)
+        imgui.SameLine()
+        imgui.Checkbox('Proc mode (/proc)##gcwi', wi.proc)
+        imgui.PushItemWidth(-1)
+        imgui.InputTextWithHint(
+            '##gcwi_buffs', 'Buffs up (for Hoxne combos), comma between: Impetus, Footwork', wi.buffs, 96
+        )
+        imgui.PopItemWidth()
+    end
+    -- what_if (resource lookups) and the grouping, redone only when the set, the modes or the set list change
+    local ignored, ignoreList = ignored_suggestion_names(), {}
+    for name in pairs(ignored) do
+        ignoreList[#ignoreList + 1] = name
+    end
+    table.sort(ignoreList)
+    local ignoreKey = table.concat(ignoreList, ',')
+    editorState.ui.overShowIgnored = editorState.ui.overShowIgnored or { false }
+    local okey = table.concat({
+        set.name,
+        table.concat(o.msets, ','),
+        tostring(o.dt),
+        tostring(o.high),
+        tostring(o.hoxne),
+        tostring(o.proc),
+        table.concat(o.buffs, ','),
+        ignoreKey,
+        tostring(editorState.ui.overShowIgnored[1]),
+        editorState.document.revision,
+    }, '\0')
+    local O = editorState.ui.over
+    if (O == nil) or (O.key ~= okey) then
+        local list, note = ctx.actions.Related(set, o)
+        O = { key = okey, list = list, note = note, order = {}, groups = {}, nHave = 0, nMiss = 0, nIgnored = 0, }
+        for pos, w in ipairs(list) do
+            w.pos = pos -- what_if lists them in the order they go on
+            w.ignored = (ignored[string.lower(w.name)] == true)
+            w.have = has_set(w.name)
+            w.parentHave = (w.parent ~= nil) and has_set(w.parent)
+            if w.ignored then O.nIgnored = O.nIgnored + 1 end
+            if not w.ignored or editorState.ui.overShowIgnored[1] then
+                if w.have then
+                    O.nHave = O.nHave + 1
+                else
+                    O.nMiss = O.nMiss + 1
+                end
+                local h = (#w.conds == 0) and 'Always' or table.concat(w.conds, ' + ')
+                if O.groups[h] == nil then
+                    O.groups[h] = {}
+                    O.order[#O.order + 1] = h
+                end
+                table.insert(O.groups[h], w)
+            end
+        end
+        editorState.ui.over = O
+    end
+    local list, note = O.list, O.note
+    imgui.Separator()
+    -- what is shown: Find (a set's name or its group's heading) and Missing only narrow it; Make all makes what is
+    -- shown
+    editorState.ui.overFind, editorState.ui.overMiss, editorState.ui.overFold =
+        editorState.ui.overFind or { '' }, editorState.ui.overMiss or { false }, editorState.ui.overFold or {}
+    imgui.PushItemWidth(200)
+    imgui.InputTextWithHint('##gcwi_find', 'Find: Dt, Impetus, Hoxne...', editorState.ui.overFind, 48)
+    imgui.PopItemWidth()
+    imgui.SameLine()
+    imgui.Checkbox('Missing only##gcwi_miss', editorState.ui.overMiss)
+    imgui.SameLine()
+    imgui.Checkbox('Show ignored (' .. O.nIgnored .. ')##gcwi_ignored', editorState.ui.overShowIgnored)
+    if imgui.IsItemHovered() then
+        set_tip(
+            'Ignored names are hidden by default. Add or remove them in settings.EditorIgnoreSuggestions; this checkbox only shows them temporarily.'
+        )
+    end
+    local find = string.lower(editorState.ui.overFind[1] or '')
+    local vkey = O.key
+        .. '\0'
+        .. find .. '\0' .. tostring(editorState.ui.overMiss[1]) .. '\0' .. tostring(editorState.ui.overShowIgnored[1])
+    local V = O.view
+    if (V == nil) or (V.key ~= vkey) then
+        V = { key = vkey, order = {}, groups = {}, heads = {}, n = 0, nHave = 0, nMiss = 0, miss = {} }
+        for _, h in ipairs(O.order) do
+            local inHead = (find ~= '') and (string.find(string.lower(h), find, 1, true) ~= nil)
+            for _, w in ipairs(O.groups[h]) do
+                if ((find == '') or inHead or (string.find(string.lower(w.name), find, 1,
+                    true) ~= nil)) and not (editorState.ui.overMiss[1] and w.have) then
+                    if V.groups[h] == nil then
+                        V.groups[h] = {}
+                        V.order[#V.order + 1] = h
+                        V.heads[h] = { text = (h == 'Always') and 'Always' or ('When: ' .. h), key = h }
+                    end
+                    table.insert(V.groups[h], w)
+                    V.n = V.n + 1
+                    if w.have then
+                        V.nHave = V.nHave + 1
+                    else
+                        V.nMiss = V.nMiss + 1
+                        V.miss[#V.miss + 1] = w
+                    end
+                end
+            end
+        end
+        O.view = V
+    end
+    local visibleTotal = #list - O.nIgnored + (editorState.ui.overShowIgnored[1] and O.nIgnored or 0)
+    imgui.TextUnformatted(
+        (V.n == visibleTotal) and string.format('%d sets: ', visibleTotal)
+            or string.format('%d of %d sets: ', V.n, visibleTotal)
+    )
+    imgui.SameLine()
+    pill(V.nHave .. ' you have', palette.ok, palette.okBg)
+    imgui.SameLine(0, 14)
+    pill(
+        V.nMiss .. ' missing',
+        (V.nMiss > 0) and palette.warn or palette.dim, (V.nMiss > 0) and palette.warnBg or palette.chipBg
+    )
+    local makeAll = nil -- made after the list is drawn: making changes it
+    if V.nMiss > 0 then
+        imgui.SameLine()
+        if make_button('Make all ' .. V.nMiss .. '##gcwi_all') then makeAll = V.miss end
+        if imgui.IsItemHovered() then
+            set_tip(
+                wrap(
+                    'Adds every missing set shown, empty, next to its base set in the file.\nNothing is saved until Save + reload.',
+                    60
+                )
+            )
+        end
+    end
+    imgui.BeginChild('##gcedit_over', { 0, 0 }, 0)
+    if #list == 0 then
+        imgui.TextColored(palette.dim, 'GoomSwap adds no sets of its own to this one.')
+    elseif V.n == 0 then
+        imgui.TextColored(palette.dim, editorState.ui.overMiss[1] and 'Nothing missing here.' or 'No set matches.')
+    end
+    local clip = clip_begin()
+    local width = (imgui.GetWindowWidth ~= nil) and imgui.GetWindowWidth() or nil
+    local function tw(t)
+        local w = xy(imgui.CalcTextSize(t))
+        return tonumber(w) or 0
+    end
+    local function row(w) -- one set: its place in the order, have (click: open it) or Make, its name
+        local exists = w.have
+        imgui.TextColored(palette.dim, w.pos .. '.')
+        imgui.SameLine()
+        if w.self then
+            imgui.TextColored(palette.blue, w.name .. '  (this set)')
+        elseif exists then
+            pill('have', palette.ok, palette.okBg)
+            imgui.SameLine(0, 12)
+            w.selLabel = w.selLabel or (w.name .. '##gcwis' .. w.pos)
+            if imgui.Selectable(w.selLabel, false) then go_to(w.name, nil) end
+        else
+            w.makeLabel = w.makeLabel or ('Make##gcwi' .. w.pos)
+            if make_button(w.makeLabel) then make_set(w.name, nil, true) end
+            imgui.SameLine()
+            imgui.TextColored(palette.dim, w.name)
+        end
+        if imgui.IsItemHovered() and ((w.parent ~= nil) or (exists and not w.self) or (w.src ~= nil) or w.proc) then
+            local tip = {}
+            if exists and not w.self then
+                tip[#tip + 1] = 'Click: open ' .. w.name .. '. < Back (over the slots) comes back here.'
+            end
+            if w.src == 'file' then
+                tip[#tip + 1] = 'In your file, named after '
+                    .. w.parent
+                    .. ', but nothing GoomSwap or your job file names looks for it: your job file may build its name in code (see the note at the end).'
+            elseif w.parent ~= nil then
+                tip[#tip + 1] = 'Goes on over ' .. w.parent .. '.'
+                if not w.parentHave then
+                    tip[#tip + 1] = 'GoomSwap only looks for it when ' .. w.parent .. ' exists.'
+                end
+            end
+            if w.src == 'job' then tip[#tip + 1] = 'Your job file names it, line ' .. w.line .. ':\n' .. w.code end
+            if w.proc == 'engaged' then
+                tip[#tip + 1] =
+                    '/proc while engaged: in place of every other set here (to proc a mob, not kill it); the weapon mode stays, and sleep/doom sets still go on.'
+            elseif w.proc then
+                tip[#tip + 1] =
+                    '/proc: in place of all the WS gear above (to proc a mob, not kill it); slots it leaves out keep what you have on.'
+            end
+            set_tip(wrap(table.concat(tip, '\n'), 60))
+        end
+        if (w.src == 'job') and not w.self then tag('job file', palette.dim) end
+        if w.ignored then tag('ignored', palette.dim) end
+    end
+    imgui.PushTextWrapPos(0)
+    for gi, h in ipairs(V.order) do
+        local g, H = V.groups[h], V.heads[h]
+        local folded = (find == '') and (editorState.ui.overFold[h] == true) -- a search shows every match
+        local on = conds_on(g[1].conds, now)
+        -- a group of one goes on one row with its heading when both fit the panel
+        if (H.oneAt ~= width) or (H.oneOn ~= on) then
+            local w1 = g[1]
+            H.oneAt, H.oneOn = width, on
+            H.one = (#g == 1)
+                and (width ~= nil)
+                and (
+                    (
+                        tw('- ' .. H.text)
+                        + (on and tw('(on now)') + 12 or 0)
+                        + 16
+                        + tw(w1.pos .. '. Make ' .. w1.name)
+                        + ((w1.src == 'job') and tw(' job file') or 0)
+                        + 24
+                    ) <= (width - 24)
+                )
+        end
+        if not clip_skip(clip, H) then
+            imgui.Spacing()
+            imgui.TextColored(
+                palette.blue, (folded and '+ ' or '- ') .. H.text .. (folded and ('  (' .. #g .. ')') or '')
+            )
+            if imgui.IsItemClicked(0) and (find == '') then editorState.ui.overFold[h] = not folded end
+            if (find == '') and imgui.IsItemHovered() then
+                set_tip(folded and 'Click: show this group' or 'Click: fold this group')
+            end
+            if on then
+                imgui.SameLine(0, 12)
+                imgui.TextColored(palette.ok, '(on now)')
+            end
+            if not folded then
+                local miss = 0
+                for _, w in ipairs(g) do
+                    if not w.have then miss = miss + 1 end
+                end
+                if miss > 1 then
+                    imgui.SameLine()
+                    H.makeLabel = H.makeLabel or ('Make ' .. miss .. '##gcwi_grp' .. gi)
+                    if make_button(H.makeLabel) then makeAll = g end
+                end
+                if H.one then
+                    imgui.SameLine(0, 16)
+                    row(g[1])
+                end
+            end
+            clip_drawn(clip, H)
+        end
+        if not folded and not H.one then
+            imgui.Indent(14)
+            for _, w in ipairs(g) do
+                if not clip_skip(clip, w) then
+                    row(w)
+                    clip_drawn(clip, w)
+                end
+            end
+            imgui.Unindent(14)
+        end
+    end
+    clip_end(clip)
+    if note ~= nil then
+        imgui.Spacing()
+        imgui.TextColored(palette.dim, note)
+    end
+    if o.hoxne and (#o.buffs == 0) then
+        imgui.Spacing()
+        imgui.TextColored(
+            palette.dim,
+            'Hoxne buff combos (Hoxne_Tp_Impetus, Hoxne_Ws_Impetus&Footwork...) take any buff name: type the buffs under Pick modes to list them.'
+        )
+    end
+    imgui.PopTextWrapPos()
+    imgui.EndChild()
+    if makeAll ~= nil then
+        for _, w in ipairs(makeAll) do
+            if not w.have and not has_set(w.name) then make_set(w.name, nil, true) end
+        end
+    end
+end
+
+local function draw_picker(set)
+    if (editorState.selection.slot == nil) or (set.code ~= nil) or set.extra then
+        imgui.TextColored(palette.dim, 'Click a slot to pick gear for it.')
+        if editorState.selection.slot == nil then -- Goomy, centred in the empty panel
+            local w, h = 52, 68
+            if (imgui.GetContentRegionAvail ~= nil) and (imgui.GetCursorPosX ~= nil) and (imgui.SetCursorPosX ~= nil)
+                and (imgui.GetCursorPosY ~= nil) and (imgui.SetCursorPosY ~= nil) then
+                local aw, ah = xy(imgui.GetContentRegionAvail())
+                if (aw ~= nil) and (ah ~= nil) then
+                    imgui.SetCursorPosX(imgui.GetCursorPosX() + math.max(0, (aw - w) / 2))
+                    imgui.SetCursorPosY(imgui.GetCursorPosY() + math.max(0, (ah - h) / 2))
+                end
+            end
+            if not draw_png('goomy_wave.png', w, h) then imgui.Dummy({ w, h }) end
+        end
+        return
+    end
+    local cur = set.slots[editorState.selection.slot]
+    local changed = (editorState.document.edits[set.name] ~= nil)
+        and (editorState.document.edits[set.name][editorState.selection.slot] ~= nil)
+    local fa = editorState.ui.fillAll
+    if (fa ~= nil) and (fa.slot == editorState.selection.slot) and fa.sets[set.name] then
+        imgui.TextColored(
+            palette.warn,
+            string.format('Fill all: your pick replaces %s in %d sets (%s).', fa.name, fa.n, editorState.selection.slot)
+        )
+        imgui.SameLine()
+        if imgui.SmallButton('Cancel##gcedit_fa') then editorState.ui.fillAll = nil end
+    end
+    imgui.TextColored(palette.blue, 'Editing: ' .. set.name .. ' / ' .. editorState.selection.slot)
+    if (cur ~= nil) and (cur.value.kind == 'code') then
+        imgui.TextColored(palette.dim, 'Written as code in the file: edit it there.')
+        return
+    end
+    local now = current(set, editorState.selection.slot)
+    local summary = editorState.cache.pickSummary
+    if not summary or summary.set ~= set.name or summary.slot ~= editorState.selection.slot
+        or summary.revision ~= editorState.document.revision then
+        summary = { set = set.name, slot = editorState.selection.slot, revision = editorState.document.revision,
+            current = (changed and 'Pending: ' or 'Saved: ') .. (now and saveReview.Value(now) or 'unchanged'),
+            original = changed and ('Saved: ' .. (cur and saveReview.Value(cur.value) or 'unchanged'))
+                or 'Choose an item to update this slot.' }
+        editorState.cache.pickSummary = summary
+    end
+    imgui.PushTextWrapPos(0)
+    editorPanels.Text(imgui, changed and palette.warn or palette.dim, summary.current)
+    editorPanels.Text(imgui, palette.dim, summary.original)
+    imgui.PopTextWrapPos()
+    local actionShown = false
+    local inspected, inspectedOwned, inspectedSource = inspection_target(set, editorState.selection.slot)
+    if inspected and inspected.kind == 'item' then
+        if imgui.Button('Inspect item##gcedit') then
+            inspect_item(set.name, editorState.selection.slot, inspected, inspectedOwned, inspectedSource)
+        end
+        if imgui.IsItemHovered() then
+            set_tip('Show this item\'s stats below the gear grid. They stay visible while you browse the picker.')
+        end
+        actionShown = true
+    end
+    local gh = (now == nil) and ghost_of(set, editorState.selection.slot) or nil -- read once: the click below drops it
+    if gh ~= nil then
+        if actionShown then editorPanels.SameLineIfFits(imgui, text_w('Drop commented line') + 24) end
+        if red_button('Drop commented line##gcedit', true) then edit(set, editorState.selection.slot, nil) end
+        if imgui.IsItemHovered() then
+            set_tip(wrap('Empties the slot. Save deletes its commented-out ' .. gh.name .. ' line from the file.', 60))
+        end
+        actionShown = true
+    end
+    if now ~= nil then
+        if actionShown then editorPanels.SameLineIfFits(imgui, text_w('Clear slot') + 24) end
+        if red_button('Clear slot##gcedit', true) then
+            edit(set, editorState.selection.slot, nil)
+            feedback('Cleared ' .. set.name .. ' / ' .. editorState.selection.slot .. ' (unsaved).')
+        end
+        actionShown = true
+    end
+    if changed then
+        if actionShown then editorPanels.SameLineIfFits(imgui, text_w('Undo slot') + 24) end
+        if imgui.SmallButton('Undo slot##gcedit') then undo_slot(set, editorState.selection.slot) end
+        if imgui.IsItemHovered() then
+            set_tip('Back to what the file has: ' .. ((cur ~= nil) and cur.value.name or 'empty'))
+        end
+    end
+    imgui.PushItemWidth(-1)
+    imgui.InputTextWithHint('##gcedit_search', 'Search name or augment', editorState.ui.search, 96)
+    imgui.PopItemWidth()
+    if editorState.ui.search[1] ~= '' then
+        if imgui.SmallButton('Clear search##gear') then editorState.ui.search[1] = '' end
+        imgui.SameLine()
+    end
+    imgui.Checkbox('Any job / level##gcedit', editorState.ui.anyJob)
+    editorPanels.SameLineIfFits(imgui, text_w('Can equip now') + 36)
+    imgui.Checkbox('Can equip now##gcedit', editorState.ui.wardOnly)
+    imgui.Checkbox('Needs RP##picker', editorState.ui.rpOnly)
+    editorPanels.SameLineIfFits(imgui, text_w('Augmented') + 36)
+    imgui.Checkbox('Augmented##picker', editorState.ui.augOnly)
+    editorPanels.SameLineIfFits(imgui, text_w('All items') + 36)
+    imgui.Checkbox('All items##picker', editorState.ui.allItems)
+    if imgui.IsItemHovered() then set_tip('Also every item you do not own, to plan a set (shown as not owned).') end
+    local allReady = editorState.ui.allItems[1] and index_all_items()
+    if editorState.ui.allItems[1] and not allReady then
+        imgui.TextColored(palette.dim, string.format('Indexing items... %d%%',
+            math.floor(allItems.nextId * 100 / 65535)))
+    end
+    if editorState.ui.anyJob[1] or editorState.ui.wardOnly[1] or editorState.ui.rpOnly[1] or editorState.ui.augOnly[1]
+        or editorState.ui.search[1] ~= '' then
+        editorPanels.SameLineIfFits(imgui, text_w('Reset filters') + 24)
+        if imgui.SmallButton('Reset filters##picker') then
+            editorState.ui.anyJob[1], editorState.ui.wardOnly[1], editorState.ui.rpOnly[1], editorState.ui.augOnly[1],
+                editorState.ui.search[1] =
+                false, false, false, false, ''
+        end
+    end
+    local find = string.lower(editorState.ui.search[1] or '')
+    -- the rows that fit, rebuilt only when the slot, the filters or the bags change; copies alike in every way
+    -- (name, augments, path) share a row that names each bag
+    local pkey = table.concat({
+        editorState.selection.slot,
+        find,
+        tostring(editorState.ui.anyJob[1]),
+        tostring(editorState.ui.wardOnly[1]),
+        tostring(editorState.ui.rpOnly[1]),
+        tostring(editorState.ui.augOnly[1]),
+        tostring(allReady),
+        editorState.document.revision,
+    }, '\0')
+    if editorState.cache.picksKey ~= pkey then
+        local rows, byKey = {}, {}
+        for _, g in ipairs(editorState.inventory.items) do
+            if fits(g, editorState.selection.slot) and picker.Accept( g, find, editorState.ui.wardOnly[1],
+                editorState.ui.rpOnly[1], editorState.ui.augOnly[1] ) then
+                local row = byKey[g.key]
+                if row == nil then
+                    row = { g = g, bags = { g.bag }, equippable = g.equippable }
+                    byKey[g.key] = row
+                    rows[#rows + 1] = row
+                else
+                    row.bags[#row.bags + 1] = g.bag
+                    if g.equippable and not row.equippable then row.g, row.equippable = g, true end
+                end
+            end
+        end
+        if allReady then -- unowned: after what you own, one row per name
+            local owned = {}
+            for _, row in ipairs(rows) do owned[row.g.lname] = true end
+            for _, g in ipairs(allItems.rows) do
+                if not owned[g.lname] and fits(g, editorState.selection.slot)
+                    and picker.Accept(g, find, editorState.ui.wardOnly[1], editorState.ui.rpOnly[1],
+                        editorState.ui.augOnly[1]) then
+                    rows[#rows + 1] = { g = g, bags = { g.bag }, equippable = false }
+                end
+            end
+        end
+        editorState.cache.picksKey, editorState.cache.picks = pkey, rows
+        if imgui.SetScrollY then editorState.ui.resetPickerScroll = true end
+    end
+    local inOther = {}
+    for _, s2 in ipairs(SCREEN) do
+        if s2 ~= editorState.selection.slot then
+            local v = current(set, s2)
+            if (v ~= nil) and (v.name ~= nil) then inOther[string.lower(v.name)] = s2 end
+        end
+    end
+    local selectedCopy = owned_for(set, editorState.selection.slot)
+    -- a new slot: scroll to the piece in it once
+    local scroll = (editorState.cache.picksFor ~= set.name .. '\0' .. editorState.selection.slot)
+    editorState.cache.picksFor = set.name .. '\0' .. editorState.selection.slot
+    imgui.TextColored(palette.dim, #editorState.cache.picks .. ' items')
+    if imgui.IsItemHovered() then
+        set_tip('Right-click for item actions. Green marker = accessible; amber = storage. Hover a row for all bags and stats.')
+    end
+    -- Keep the column headings above the scrollable, virtualized rows.
+    local style = imgui.GetStyle and imgui.GetStyle()
+    local scrollbar = style and style.ScrollbarSize or 14
+    imgui.BeginChild('##gcedit_pick_header', { 0, imgui.GetTextLineHeightWithSpacing() + 4 }, 0,
+        ImGuiWindowFlags_NoScrollbar)
+    local pickerWidth = math.max(1, (xy(imgui.GetContentRegionAvail()) or 300) - scrollbar)
+    local bagColumn, bagWidth = picker.BagColumn(pickerWidth)
+    imgui.TextColored(palette.dim, 'Item')
+    imgui.SameLine(imgui.GetCursorPosX() + bagColumn)
+    imgui.TextColored(palette.dim, 'Bag')
+    imgui.EndChild()
+    imgui.Separator()
+    imgui.BeginChild('##gcedit_picks', { 0, 0 }, 0)
+    local bagX = imgui.GetCursorPosX() + bagColumn
+    if editorState.ui.resetPickerScroll then
+        imgui.SetScrollY(0)
+        editorState.ui.resetPickerScroll = nil
+    end
+    -- only the rows in view are drawn (a fixed row height, measured once): a 300-row list costs as much as 30
+    local clip = (editorState.cache.rowH ~= nil)
+        and (imgui.GetScrollY ~= nil)
+        and (imgui.GetWindowHeight ~= nil) and (imgui.GetCursorPosY ~= nil) and (imgui.SetCursorPosY ~= nil)
+    local first, last = 1, #editorState.cache.picks
+    local top = (imgui.GetCursorPosY ~= nil) and imgui.GetCursorPosY() or 0
+    if clip then
+        if scroll and (imgui.SetScrollY ~= nil) then -- the slot's piece mid-view
+            for i, row in ipairs(editorState.cache.picks) do
+                if selectedCopy ~= nil and row.g.key == selectedCopy.key then
+                    imgui.SetScrollY(math.max(0, (i - 1) * editorState.cache.rowH - imgui.GetWindowHeight() / 2))
+                    break
+                end
+            end
+            scroll = false
+        end
+        local y, h = imgui.GetScrollY() - top, imgui.GetWindowHeight()
+        first = math.max(1, math.floor(y / editorState.cache.rowH) - 1)
+        last = math.min(#editorState.cache.picks, math.ceil((y + h) / editorState.cache.rowH) + 2)
+    end
+    for i = first, last do
+        local row = editorState.cache.picks[i]
+        local g = row.g
+        if clip then imgui.SetCursorPosY(top + (i - 1) * editorState.cache.rowH) end
+        local y0 = (not clip) and (i == 1) and (imgui.GetCursorPosY ~= nil) and imgui.GetCursorPosY() or nil
+        if canDraw() then picker.DrawAccessMarker(imgui, palette, row.equippable, ctx.ROW_ICON) end
+        draw_icon(g.id, ctx.ROW_ICON)
+        imgui.SameLine()
+        local isNow = selectedCopy ~= nil and selectedCopy.key == g.key
+        if g.progress and g.progress.unfinished then imgui.PushStyleColor(ImGuiCol_Text, palette.rp) end
+        local label = cardText.Fit(picker.Caption(g, isNow and (changed and 'Pending' or 'Saved')),
+            math.max(30, bagX - imgui.GetCursorPosX() - 10), text_w)
+            .. '##pick' .. i
+        local picked = imgui.Selectable(label, isNow)
+        if g.progress and g.progress.unfinished then imgui.PopStyleColor() end
+        if picked then
+            choose_item(set, editorState.selection.slot, g)
+            selectedCopy = g
+        end
+        if (editorState.ui.drag == nil) and (imgui.IsItemActive ~= nil) and (imgui.IsMouseDragging ~= nil)
+            and imgui.IsItemActive() and imgui.IsMouseDragging(0) then
+            editorState.ui.drag = { g = g, slot = editorState.selection.slot } -- drop it on a slot in the grid
+        end
+        if isNow and scroll and (imgui.SetScrollHereY ~= nil) then
+            imgui.SetScrollHereY(0.5)
+            scroll = false
+        end
+        if imgui.IsItemClicked(1) then request_context('picker', set, editorState.selection.slot, g) end
+        if imgui.IsItemHovered() and itemTooltip.HoverReady(imgui, 'pick:' .. g.key, editorState.ui.frame) then
+            local tooltipStarted = profiler.Start()
+            itemTooltip.Draw(
+                imgui,
+                palette,
+                itemTooltip.Model(g, g, {
+                    description = describe(g.name),
+                    bag = g.bag,
+                    equippable = row.equippable,
+                    bags = row.bags,
+                    otherSlot = inOther[g.lname],
+                })
+            )
+            profiler.Finish('Item tooltip', tooltipStarted)
+        end
+        imgui.SameLine(bagX)
+        imgui.TextColored(row.equippable and palette.dim or palette.warn,
+            cardText.Fit(picker.BagCaption(row.bags, g.bag), bagWidth - 8, text_w))
+        if y0 ~= nil then
+            editorState.cache.rowH = imgui.GetCursorPosY() - y0
+        end -- first frame: every row drawn, the height measured
+    end
+    if clip and (#editorState.cache.picks > 0) then -- the list's full height, so the scrollbar is right
+        imgui.SetCursorPosY(top + #editorState.cache.picks * editorState.cache.rowH)
+        imgui.Dummy({ 1, 0 })
+    end
+    if #editorState.cache.picks == 0 then
+        imgui.TextColored(
+            palette.dim,
+            (find ~= '') and 'No items match. Clear the search or reset filters.'
+                or (
+                    not editorState.ui.anyJob[1]
+                        and 'Nothing you own fits your job and level: tick Any job / level.' or 'Nothing you own fits.'
+                )
+        )
+    end
+    imgui.EndChild()
+end
+
+-- To fill: what still needs gear, across every set: slots left out (commented out, as /gcbuild leaves them), pieces
+-- you do not own, pieces in a bag you cannot equip from, weapon modes with no weapon you own. Rebuilt on each change.
+local function fill_list()
+    if editorState.cache.fillVer == editorState.document.revision then return editorState.cache.fill end
+    local F = { left = {}, notOwned = {}, move = {}, modes = {}, n = 0 }
+    local idx = {}
+    local function add(list, key, name, why, set, slot)
+        local k = list .. '\0' .. key
+        local e = idx[k]
+        if e == nil then
+            e = { name = name, why = why, places = {} }
+            idx[k] = e
+            table.insert(F[list], e)
+        end
+        e.places[#e.places + 1] = { set = set.name, slot = slot, id = '##gcf_' .. list .. set.name .. slot }
+        F.n = F.n + 1
+    end
+    for _, set in ipairs(editorState.document.model.list) do
+        if (set.code == nil) and not set.extra then
+            for _, slot in ipairs(SCREEN) do
+                local v = current(set, slot)
+                if v == nil then
+                    local gh = ghost_of(set, slot)
+                    if gh ~= nil then add('left', string.lower(gh.name), gh.name, gh.why, set, slot) end
+                elseif (v.kind == 'item') and (v.name ~= nil) and not LAC_WORDS[string.lower(v.name)] then
+                    local bag, ok = where(v.name)
+                    if bag == nil then
+                        add('notOwned', string.lower(v.name), v.name, nil, set, slot)
+                    elseif not ok then
+                        add('move', string.lower(v.name), v.name, bag, set, slot)
+                    end
+                end
+            end
+        end
+    end
+    local function by_count(a, b)
+        if #a.places ~= #b.places then return #a.places > #b.places end
+        return a.name < b.name
+    end
+    table.sort(F.left, by_count)
+    table.sort(F.notOwned, by_count)
+    table.sort(F.move, by_count)
+    -- weapon modes: the /wm list as loaded; a mode whose Weapon_<mode> set has no weapon you own puts nothing on
+    for _, m in
+        ipairs(
+            (not editorState.document.inactive and (ctx.gearEngine ~= nil)
+                and (type(ctx.gearEngine.WeaponModes) == 'table')) and ctx.gearEngine.WeaponModes
+                or {}
+        )
+    do
+        if (type(m) == 'string') and (m ~= 'None') then
+            local set = editorState.document.model.byLower['weapon_' .. string.lower(m)]
+            local why = nil
+            if set == nil then
+                why = 'no Weapon_' .. m .. ' set'
+            elseif set.code == nil then
+                local any = false
+                for _, slot in ipairs({ 'Main', 'Sub', 'Range', 'Ammo' }) do
+                    local v = current(set, slot)
+                    if (v ~= nil) and (v.name ~= nil) and (where(v.name) ~= nil) then
+                        any = true
+                        break
+                    end
+                end
+                if not any then why = 'no weapon you own in Weapon_' .. m end
+            end
+            if why ~= nil then
+                F.modes[#F.modes + 1] = { mode = m, why = why, set = set }
+                F.n = F.n + 1
+            end
+        end
+    end
+    editorState.cache.fill, editorState.cache.fillVer = F, editorState.document.revision
+    return F
+end
+
+local function draw_fill()
+    local F = fill_list()
+    if F.n > 0 then
+        imgui.TextColored(palette.dim, 'What still needs gear, in every set.')
+        help(
+            'Everything that still needs gear, in every set.\n'
+                .. '- Click a set and slot: it opens on the Gear tab.\n'
+                .. '- Left out: commented out in the file (how /gcbuild leaves gear you lack).\n'
+                .. 'Nothing is saved until Save + reload.'
+        )
+        local function cnt(list)
+            local c = 0
+            for _, e in ipairs(list) do
+                c = c + #e.places
+            end
+            return c
+        end
+        local a, b, c = cnt(F.left), cnt(F.notOwned), cnt(F.move)
+        pill('Left out ' .. a, (a > 0) and palette.warn or palette.dim, (a > 0) and palette.warnBg or palette.chipBg)
+        imgui.SameLine(0, 14)
+        pill('Not owned ' .. b, (b > 0) and palette.bad or palette.dim, (b > 0) and palette.badBg or palette.chipBg)
+        imgui.SameLine(0, 14)
+        pill('Wrong bag ' .. c, (c > 0) and palette.warn or palette.dim, (c > 0) and palette.warnBg or palette.chipBg)
+        if #F.modes > 0 then
+            imgui.SameLine(0, 14)
+            pill('Weapon modes ' .. #F.modes, palette.warn, palette.warnBg)
+        end
+    end
+    imgui.BeginChild('##gcedit_fill', { 0, 0 }, 0)
+    if F.n == 0 then
+        editorPanels.FillComplete(imgui, palette, draw_png)
+        imgui.EndChild()
+        return
+    end
+    local clip = clip_begin()
+    editorState.ui.fillFold = editorState.ui.fillFold or {}
+    -- Each piece: its name (blue) with why and how many slots; under it one row per place, the set (bright) and the
+    -- slot (dim) in two columns. The whole row is the click.
+    if F.setW == nil then
+        local w = 0
+        for _, list in ipairs({ F.left, F.notOwned, F.move }) do
+            for _, e in ipairs(list) do
+                for _, pl in ipairs(e.places) do
+                    local tw = (imgui.CalcTextSize ~= nil) and tonumber((xy(imgui.CalcTextSize(pl.set))))
+                        or (#pl.set * 7)
+                    if tw > w then w = tw end
+                end
+            end
+        end
+        F.setW = math.min(w, 220) + 16
+    end
+    local function why_col(why)
+        if why == 'not owned' then return palette.bad end
+        if string.match(why, '^only %d') then return palette.warn end
+        return palette.dim
+    end
+    local function section(list, title, col, tip)
+        if #list == 0 then return end
+        local n = 0
+        for _, e in ipairs(list) do
+            n = n + #e.places
+        end
+        imgui.Spacing()
+        local folded = editorState.ui.fillFold[title] == true
+        imgui.PushStyleColor(ImGuiCol_Text, col)
+        if imgui.Selectable( string.format( '%s %s: %d slot%s##gcf_h%s', folded and '+' or '-', title, n,
+            (n == 1) and '' or 's', title ), false ) then
+            editorState.ui.fillFold[title] = not folded
+        end
+        imgui.PopStyleColor(1)
+        if (tip ~= nil) and imgui.IsItemHovered() then set_tip(wrap(tip .. '\nClick to fold.', 64)) end
+        imgui.Separator()
+        for _, e in ipairs(folded and NONE or list) do
+            if not clip_skip(clip, e) then
+                imgui.Spacing()
+                imgui.TextColored(palette.blue, e.name)
+                if (e.why ~= nil) and (#e.why > 24) then -- a long note from the file: hover for it
+                    tag('(note)', palette.dim)
+                    if imgui.IsItemHovered() then set_tip(wrap(e.why, 60)) end
+                elseif e.why ~= nil then
+                    tag(e.why, why_col(e.why))
+                end
+                if #e.places > 1 then
+                    tag('x' .. #e.places, palette.dim)
+                    local slot, same = e.places[1].slot, true
+                    for _, pl in ipairs(e.places) do
+                        if pl.slot ~= slot then
+                            same = false
+                            break
+                        end
+                    end
+                    if same and (list ~= F.move) then
+                        imgui.SameLine()
+                        if imgui.SmallButton('Fill all##gcf_fa' .. title .. e.name) then
+                            local sets = {}
+                            for _, pl in ipairs(e.places) do
+                                sets[pl.set] = true
+                            end
+                            editorState.ui.fillAll = { name = e.name, slot = slot, sets = sets, n = #e.places }
+                            go_to(e.places[1].set, slot, 'gear')
+                        end
+                        if imgui.IsItemHovered() then
+                            set_tip('Pick once on the Gear tab: it goes in all ' .. #e.places .. ' sets.')
+                        end
+                    end
+                end
+                if list == F.notOwned then
+                    imgui.SameLine()
+                    if imgui.SmallButton('Comment out##gcf_co' .. e.name) then
+                        editorState.ui.cmt, editorState.ui.cmtNote[1] = e, ''
+                        imgui.OpenPopup('##gcedit_cmt')
+                    end
+                    if imgui.IsItemHovered() then
+                        set_tip(
+                            'Keep it in the file as a placeholder (gear still being made): its slot line\nbecomes a -- comment, with a note if you like. The set under it shows through.'
+                        )
+                    end
+                end
+                clip_drawn(clip, e)
+            end
+            for _, pl in ipairs(e.places) do
+                if not clip_skip(clip, pl) then
+                    local x0 = (imgui.GetCursorPosX ~= nil) and imgui.GetCursorPosX() or nil
+                    if imgui.Selectable( pl.id,
+                        (editorState.selection.setName == pl.set) and (editorState.selection.slot == pl.slot) ) then
+                        go_to(pl.set, pl.slot, 'gear')
+                    end
+                    if x0 ~= nil then
+                        imgui.SameLine(x0 + 14)
+                    else
+                        imgui.SameLine()
+                    end
+                    imgui.TextUnformatted(pl.set)
+                    if x0 ~= nil then
+                        imgui.SameLine(x0 + 14 + F.setW)
+                    else
+                        imgui.SameLine()
+                    end
+                    imgui.TextColored(palette.dim, pl.slot)
+                    clip_drawn(clip, pl)
+                end
+            end
+        end
+    end
+    section(
+        F.left,
+        'Left out',
+        palette.warn,
+        "The example's piece you lack, commented out where it stood: the set under it shows through until you fill it."
+    )
+    section(F.notOwned, 'Not owned', palette.bad, 'The set names it but you do not have it: that slot does nothing.')
+    section(F.move, 'In a bag you cannot equip from', palette.warn, 'Move it to a wardrobe (or Inventory).')
+    if #F.modes > 0 then
+        imgui.Spacing()
+        imgui.TextColored(palette.warn, 'Weapon modes with no weapon you own: ' .. #F.modes)
+        help('/wm still cycles to them.\nThey put nothing on until Weapon_<mode> names a weapon you own.')
+        for i, m in ipairs(F.modes) do
+            if m.set ~= nil then
+                if imgui.Selectable(m.mode .. '##gcfm' .. i, editorState.selection.setName == m.set.name) then
+                    go_to(m.set.name, 'Main', 'gear')
+                end
+            else
+                if imgui.SmallButton('Make##gcfm' .. i) then make_set('Weapon_' .. m.mode, nil, true) end
+                imgui.SameLine()
+                imgui.TextUnformatted(m.mode)
+            end
+            tag(m.why, palette.dim)
+        end
+    end
+    clip_end(clip)
+    if (editorState.ui.cmt ~= nil) and imgui.BeginPopup('##gcedit_cmt') then
+        local e = editorState.ui.cmt
+        imgui.TextUnformatted(
+            'Comment out ' .. e.name .. ' in ' .. #e.places .. ' slot' .. ((#e.places == 1) and '' or 's') .. ':'
+        )
+        imgui.PushItemWidth(320)
+        imgui.InputTextWithHint(
+            '##gcedit_cmtnote', 'Note (optional): JSE in progress, need 3 more...', editorState.ui.cmtNote, 80
+        )
+        imgui.PopItemWidth()
+        if imgui.Button('Comment out##gcedit_cmtok') then
+            local note = string.match(editorState.ui.cmtNote[1] or '', '^%s*(.-)%s*$')
+            for _, pl in ipairs(e.places) do
+                local set = editorState.document.model.byName[pl.set]
+                if (set ~= nil) and (set.code == nil) and (set.slots[pl.slot] ~= nil) then
+                    editorState.document.edits[set.name] = editorState.document.edits[set.name] or {}
+                    editorState.document.edits[set.name][pl.slot] =
+                        { remove = true, comment = true, name = e.name, why = (note ~= '') and note or nil }
+                end
+            end
+            editorState.document.revision, editorState.ui.cmt = editorState.document.revision + 1, nil
+            imgui.CloseCurrentPopup()
+        end
+        imgui.SameLine()
+        if imgui.SmallButton('Cancel##gcedit_cmtno') then
+            editorState.ui.cmt = nil
+            imgui.CloseCurrentPopup()
+        end
+        imgui.TextColored(palette.dim, 'Unsaved until Save + reload. Undo slot / Revert set undoes it.')
+        imgui.EndPopup()
+    end
+    imgui.EndChild()
+end
+
+local function menu_button(label, enabled)
+    local disabled = not enabled and imgui.BeginDisabled ~= nil
+    if disabled then imgui.BeginDisabled() end
+    local clicked = imgui.Button(label)
+    if disabled then imgui.EndDisabled() end
+    return clicked and enabled
+end
+
+local function draw_context_menu()
+    if editorState.ui.openContext then
+        imgui.OpenPopup('##gcedit_context')
+        editorState.ui.openContext = nil
+    end
+    if not imgui.BeginPopup('##gcedit_context') then return end
+    local context = editorState.ui.context
+    local set = context and editorState.document.model.byName[context.set]
+    if set then
+        imgui.TextUnformatted(set.name .. (context.slot and (' / ' .. context.slot) or ''))
+        imgui.Separator()
+        if context.kind == 'set' then
+            if imgui.Button('Open set##context') then
+                editorPreferences.Select(editorState, set.name)
+                imgui.CloseCurrentPopup()
+            end
+            if imgui.Button((editorState.preferences.favorites[set.name] and 'Unfavorite' or 'Favorite')
+                .. '##context') then
+                editorPreferences.ToggleFavorite(editorState.preferences, set.name)
+                save_preferences()
+                feedback('Updated favorite: ' .. set.name .. '.')
+                imgui.CloseCurrentPopup()
+            end
+            local selected = editorState.document.model.byName[editorState.selection.setName]
+            if menu_button('Compare with current set##context', selected and selected ~= set
+                and not selected.code and not set.code and not selected.extra and not set.extra) then
+                editorState.ui.cmp = { set = selected.name, with = set.name }
+                editorState.selection.tab = 'compare'
+                imgui.CloseCurrentPopup()
+            end
+            imgui.Separator()
+            set_action_entries(set)
+            -- Move up / down under its heading (the heading takes your own order), or to another heading: this
+            -- set by its exact name (char.lua's settings, or the shared headings file)
+            local H = ctx.headings
+            imgui.Separator()
+            for _, mv in ipairs({ { 'Move up', -1 }, { 'Move down', 1 } }) do
+                if mv[2] > 0 then imgui.SameLine() end
+                if imgui.SmallButton(mv[1] .. ' in ' .. set.group .. '##ownorder') then
+                    local list = H.lib.MoveInOrder(H.rows(set.group), set.name, mv[2])
+                    if list == nil then
+                        H.savePrefs(nil, (mv[2] < 0) and 'already at the top' or 'already at the bottom')
+                    else
+                        H.savePrefs({
+                            EditorOrder = H.lib.With(H.pref('EditorOrder'), set.group, list),
+                            EditorSort = H.lib.With(H.pref('EditorSort'), set.group, 'own'),
+                        })
+                    end
+                end
+            end
+            imgui.TextColored(palette.dim, 'Move to heading ('
+                .. ((H.source() == 'shared') and 'every character' or 'every job on this character') .. '):')
+            local n = 0
+            for _, h in ipairs(H.order()) do
+                if h ~= set.group then
+                    if (n % 3) ~= 0 then imgui.SameLine() end
+                    n = n + 1
+                    if imgui.SmallButton(h .. '##moveto') then
+                        H.save(H.lib.Place(H.setting(), H.builtins, set.name, h))
+                        imgui.CloseCurrentPopup()
+                    end
+                end
+            end
+            if (set.builtin ~= nil) and (H.lib.PlacedBy(H.setting(), set.name) ~= nil) then
+                if imgui.SmallButton('Back to where its name puts it##moveto') then
+                    H.save(H.lib.Place(H.setting(), H.builtins, set.name, nil))
+                    imgui.CloseCurrentPopup()
+                end
+            end
+            draw_weapon_copies(set)
+            draw_wm_order(set)
+            imgui.Separator()
+            if imgui.SmallButton('Copy to other jobs...##copyjobs') then
+                editorState.ui.copyJobs = { set = set.name, open = true }
+                imgui.CloseCurrentPopup()
+            end
+            if imgui.IsItemHovered() then
+                set_tip('Its pieces into other job files. Pieces a job can\'t wear are left out; you pick the files.')
+            end
+        else
+            local slot, gear = context.slot, context.gear
+            local value, owned, source = inspection_target(set, slot, gear, context.source)
+            if context.kind == 'result' and value then
+                local copies = editorState.inventory.copiesByName[string.lower(value.name)] or {}
+                owned = #copies == 1 and copies[1] or nil
+            end
+            local saved = set.slots[slot]
+            local editable = not set.code and not set.extra and not editorState.document.deleted[set.name]
+                and (not saved or saved.value.kind ~= 'code')
+            if value and value.name then imgui.TextColored(palette.blue, value.name) end
+            if source then imgui.TextColored(palette.dim, source) end
+            if menu_button('Inspect item below grid##context', value and value.name) then
+                inspect_item(set.name, slot, value, owned, source)
+                imgui.CloseCurrentPopup()
+            end
+            imgui.TextColored(palette.dim, value and value.name
+                and 'View stats while browsing; leaves this slot unchanged.'
+                or 'No item in this slot or the selected result.')
+            if menu_button('Find in every job file##context', value and value.name) then
+                editorState.ui.findItem = { name = value.name, open = true }
+                imgui.CloseCurrentPopup()
+            end
+            imgui.Separator()
+            if context.kind == 'picker' then
+                if menu_button('Use item in slot##context', editable) then
+                    choose_item(set, slot, gear)
+                    imgui.CloseCurrentPopup()
+                end
+            elseif menu_button('Choose gear##context', editable) then
+                go_to(set.name, slot, 'gear')
+                imgui.CloseCurrentPopup()
+            end
+            imgui.Separator()
+            local defined = current(set, slot)
+            if menu_button('Set displaced rule##context', editable
+                and not (defined and defined.name and string.lower(defined.name) == 'displaced')) then
+                edit(set, slot, { name = 'displaced', augs = {} })
+                feedback('Set ' .. set.name .. ' / ' .. slot .. ' to displaced (unsaved).')
+                imgui.CloseCurrentPopup()
+            end
+            if imgui.IsItemHovered() then
+                set_tip('Mark this slot as emptied by another equipped item, such as a two-handed weapon or instrument.')
+            end
+            imgui.Separator()
+            if menu_button('Undo slot edits##context', editorState.document.edits[set.name]
+                and editorState.document.edits[set.name][slot]) then
+                undo_slot(set, slot)
+                imgui.CloseCurrentPopup()
+            end
+            if menu_button('Clear slot##context', editable and (current(set, slot) or ghost_of(set, slot))) then
+                edit(set, slot, nil)
+                feedback('Cleared ' .. set.name .. ' / ' .. slot .. ' (unsaved).')
+                imgui.CloseCurrentPopup()
+            end
+        end
+    end
+    imgui.EndPopup()
+end
+
+-- Rename: staged like a deletion and written on Save (setFile.AddRenames: the key and every reference in code).
+-- The set keeps its old name in the editor until the reload.
+local function variants_of(name)
+    local out = {}
+    for _, set in ipairs(editorState.document.model.list) do
+        if string.sub(set.name, 1, #name + 1) == name .. '_' then out[#out + 1] = set.name end
+    end
+    return out
+end
+
+local function rename_problem(old, new)
+    if (new == '') or string.find(new, '[\r\n]') then return 'Type a name.' end
+    if new == old then return 'That is its name now.' end
+    local taken = editorState.document.model.byLower[string.lower(new)]
+    if (taken ~= nil) and (taken.name ~= old) then return new .. ' exists (names ignore case).' end
+    for from, to in pairs(editorState.document.renames or {}) do
+        if (from ~= old) and (string.lower(to) == string.lower(new)) then
+            return from .. ' is being renamed to ' .. to .. '.'
+        end
+    end
+    if (string.sub(old, 1, 7) == 'Weapon_') ~= (string.sub(new, 1, 7) == 'Weapon_') then
+        return 'A weapon set keeps its Weapon_ start (it is what makes it a /wm mode).'
+    end
+end
+
+-- A set not saved yet: renamed in place, everywhere the editor keys it by name.
+local function rename_new(set, new)
+    local doc, old = editorState.document, set.name
+    doc.model.byName[old], doc.model.byLower[set.lname] = nil, nil
+    set.name, set.lname, set.bracket = new, string.lower(new), (setFile.FormatKey(new) ~= new)
+    set.group = group_of(new)
+    doc.model.byName[new], doc.model.byLower[set.lname] = set, set
+    doc.edits[new], doc.edits[old] = doc.edits[old], nil
+    for _, u in ipairs(editorState.history.entries or {}) do
+        if u.set == old then u.set = new end
+    end
+    editorPreferences.RenameFavorites(editorState.preferences, { [old] = new })
+    if editorState.selection.setName == old then editorState.selection.setName = new end
+    doc.revision = doc.revision + 1
+end
+
+    return { draw_over = draw_over, draw_picker = draw_picker, fill_list = fill_list, draw_fill = draw_fill,
+        draw_context_menu = draw_context_menu, variants_of = variants_of, rename_problem = rename_problem,
+        rename_new = rename_new }
+end

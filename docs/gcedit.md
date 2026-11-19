@@ -1,0 +1,160 @@
+# Set editor: `/gcedit`
+
+[Back to README](../README.md)
+
+Edits your loaded job file. Changes stay in memory until you confirm a save. `/gcedit Savage Blade` opens a set.
+
+## Add a set or mode
+
+1. **+ New set**, type a name, **Create**. Names the engine looks for that your file lacks are suggested as you
+   type. Tick *Copy slots from ...* to start from the open set.
+2. Click a slot and pick gear from **Gear** (or **Use worn** for everything you have on).
+3. **Save + reload**, check the review, confirm.
+
+| To add | Do |
+|---|---|
+| A set for an action | Name it after the action: `Barrage`, `Cure`, `Savage Blade` |
+| A weapon mode (`/wm`) | Name it `Weapon_<Name>` with Main/Sub; Save adds it to `gcinclude.WeaponModes`. `Weapon_<Name>_1h` is used when you can't dual wield |
+| TP or WS gear for one weapon | `Tp_<Name>` / `Ws_<Name>` (`Tp_Chango`): worn over `Tp_Default` / `Ws_Default` while `/wm <Name>` is on; `Tp_Chango_Acc` with `/mset acc` too. Right-click `Tp_Default` (or `Tp_Acc`, `Dt`, `Idle`, a WS's set): **Copy as a weapon set** makes one from it |
+| TP or WS gear for a weapon type | `Tp_2h` / `Tp_1h` (and `Ws_`, `Dt_`, `Idle_`...): for a weapon with no set of its own, by its Main ([How sets stack](sets.md#how-sets-stack)) |
+| A Main/Sub/Range pick (`/mw` `/sw` `/rw`) | Nothing: every item in a `Weapon_` set is one. Others go in `gcinclude.SubModes` (etc.) in the file |
+| A COR/RNG gun | Add its name to `gcinclude.RangeModes` in the file |
+| A melee mode (`/mset`) | **Related** tab, **+ New mode**; its sets are `<set>_<mode>` (`Tp_Hybrid`) |
+
+## Headings
+
+The set list is grouped under headings (Idle, Defense, Melee, Weapons...). Arrange them your way:
+
+- **Right-click a heading:** Move up / Move down, **New heading below** (type its name first), and for a heading
+  of your own **Rename** and **Remove this heading** (its sets go back where their names put them).
+  **Built-in order** undoes all of it.
+- **Right-click a set:** **Move to heading** puts that set under any heading; **Back to where its name puts it**
+  undoes the move. **Move up / Move down** reorders it inside its heading.
+- **Drag a set** onto a heading to move it there, or onto another set to put it just before that one.
+- **Hide** (heading menu): **Hide on <JOB>** or **Hide on every job**. **Show hidden** (beside the filters) shows
+  them again, marked hidden; a search always shows them. **Show again** undoes it.
+- **Sets in it** (heading menu): **File order**, **A-Z**, or **Your order** (what Move up / down and dragging make).
+- Folded headings stay folded after a game restart (`gcedit-folds.txt` beside `char.lua`).
+- **Share with every character** (heading menu): these headings go into the shared settings file, and every
+  character without headings of its own uses them. **Only this character** copies them back into `char.lua`.
+
+Saved at once in the character's `char.lua` (`settings.EditorGroups`, `EditorHidden`, `EditorSort`, `EditorOrder`),
+or in the shared file once shared ([Settings](settings.md#every-character-goomswap-sharedlua)), so every job shows the
+same headings in the same order; the file is backed up first (once each time the editor opens). You can also
+write it by hand:
+
+```lua
+EditorGroups = {
+    { 'Weapons', 'Weapon_*' },  -- a heading and the set names it takes ('*': any text, any case)
+    'Idle', 'Defense', 'Melee', 'Weapon skills', 'Job abilities', 'Casting', 'Named weapon skills', 'Hoxne',
+    { 'Two-handed', 'Tp_Chango', 'Ws_Chango' }, -- your own heading: these exact sets
+},
+```
+
+Listed headings come first, in that order; built-in ones you leave out follow, Other last. A set named exactly
+under a heading goes there first, then the first heading whose `*` pattern takes it, else its built-in heading.
+
+```lua
+EditorHidden = { all = { 'Received' }, WAR = { 'Hoxne' } }, -- hidden on every job / on WAR
+EditorSort = { Melee = 'own', Casting = 'az' },             -- 'file' (the default), 'az', 'own'
+EditorOrder = { Melee = { 'Tp_Default', 'Tp_Chango' } },    -- 'own': these first, the rest in file order
+```
+
+## Across job files
+
+- **Copy to other jobs** (right-click a set): its pieces into the job files you tick (new sets ticked; a file that
+  has the set already replaces only the slots this set fills). A piece that job can't wear (by the item's job
+  list, or above that job's level) is left out and listed; slots this set leaves empty keep that file's own.
+  Each file is backed up and written only if it still loads. A job you have loaded needs `/lac reload` after.
+- **Find in every job file** (right-click a slot): every set that names the item, in this file (as edited) and
+  the others (as saved). Click one to open it there.
+- **/wm order** (right-click a `Weapon_` set): **Earlier / Later in /wm** reorders the cycle; written on Save.
+- **Unused** (filter): sets nothing seems to look for: no trigger by their name, not one of the engine's names,
+  not a variant of another set, never named in the job file. **Delete these** stages them for Save. It is
+  cautious, but check: a set your own code builds a name for can still look unused.
+
+## Settings
+
+**Settings** (top bar) lists every GoomSwap setting, its value now and where it comes from: **default**, **every
+character** (the shared file), **this character** (`char.lua`) or **this job** (the job file open in the editor).
+Pick **Save to**, change a value, **Save**; **Clear** takes it out of that file. `char.lua` and the shared file are
+written at once; **This job** changes wait for the editor's Save, like set edits, as `gcinclude.settings.X = value;`
+lines (a new one goes just before `gcinclude.Initialize()`). Below the settings, **Only in <job file>** edits that
+file's own options the same way: `DefaultWeapons`, `WeaponRoles`, `MainModes` `SubModes` `RangeModes`,
+`WeaponItemMap`, `AlwaysDualWield`, `NukeModes`, `Packer`, `SIRSkip` `THSkip`, `CureObi`, `SafeAmmo`, `RangeAmmo`,
+`CORmsg`, `LockstyleSet` (`WeaponModes` and `MeleeModes` are shown; Weapon_ sets and **+ New mode** change them).
+A value written as code, or set in more than one place in the file, is left for you to edit there. True/false are checkboxes, numbers and text are boxes, tables are Lua
+(`{ 'Ninjutsu' }`). Hover a setting for what it does, an example typed the way its box takes it, and its value in
+each file; an empty box shows the example greyed. Numbers keep to their range (HP/MP % 0-100, TP 0-3000).
+Settings most never change (item names like `HoxneItem`, game data, timing windows) show with **Show all**, when a
+file sets one, or in a search; job options only some jobs read (`NukeModes`, `CORmsg`) show on those jobs. A value the engine would refuse on load is refused here. `/lac reload` applies it everywhere;
+a job file's own setting still wins. Details: [Settings](settings.md).
+
+## Find your way
+
+- A comment right after a set's `{` in the job file shows under its name as **Note** (`Foe = { -- Lullaby keeps
+  your weapons`).
+- Search or fold the set list; Favorites appear once at the top. **Unsaved sets**, **Issues**, **Missing**,
+  **Needs RP** and **Unused** filter it; the `?` beside Issues explains the colours.
+- Set colours: amber unsaved, red missing gear, violet unfinished RP, then green (all 16 slots, or a ready
+  overlay) and teal (all 12 armor slots; weapons left out on purpose).
+- Drag dividers to resize (double-click resets). Density is remembered per job.
+- **Theme** (top bar): the editor's colours. Same as the bar (default), **Match goomui** (the theme goomui saved for
+  this character), GoomSwap's own, or any of the 30 presets; hover one to preview. Kept per character
+  (`gcedit-theme.txt`); the bar keeps its own.
+- **Rescan bags** refreshes ownership and keeps edits. Storage Slip gear counts as owned and shows its slip.
+- The **filename** opens the character's other job files. They are edited without changing your active job and
+  saved with **Save file** (no reload). Switching with unsaved work asks to keep editing or discard.
+
+## Gear grid and picker
+
+| On a card | Means |
+|---|---|
+| Blue outline | The slot being edited |
+| Amber fill, Unsaved | A pending change |
+| Violet rank | Unfinished RP |
+| Green / amber bag marker | Equippable bag / move it to Inventory or a wardrobe |
+| Missing | No copy owned |
+| Not in this set | A commented-out placeholder |
+| Unchanged / Replaced: source | The set leaves the slot alone / a later layer of the selected Result wins |
+
+- Click a slot, then pick an item from **Gear**; the header shows **Pending** vs **Saved** (paths, augments).
+- Search matches words anywhere in the name or decoded stats (`nyame damage`). Combine **Any job / level**,
+  **Can equip now**, **Needs RP**, **Augmented** and **All items** (every item you don't own too, for planning;
+  indexed once, a moment the first time). Identical copies share a row; hover for their bags. Drag a row onto a
+  card to stage it.
+- Right-click a card or row: inspect, choose, **Set displaced rule** (`Slot = 'displaced'`: another item empties
+  the slot, e.g. an instrument displacing ammo), undo, or **Clear slot** (earlier gear stays).
+
+## Summary, Inspect, Compare
+
+- **Summary** totals the set's listed gear bonuses including inherited layers (`Idle > Tp_Default > Tp_Acc`);
+  untick **Include inherited gear** for the written definition only. **Base: Auto** uses the built-in route; pick a
+  base set to change the underlay. Buffs, caps, job code and combat formulas are not simulated; conditional and
+  unknown effects sit under **Other effects / not totaled**.
+- Hover any item for its stats; elemental resistances show as the element's coloured dot and value, as the game's
+  icons do (also in Summary, and as a dot row on the card: one value when they all match, a ring for a penalty). **Inspect item below grid** pins it while you pick. Commented, inherited and
+  Result items can be inspected without adding them.
+- **Compare** shows both sets' stats and the difference (green/red by direction), or **Gear changes** slot by
+  slot. **Copy definition...** (confirmed) copies the other set's written slots. Hover any count for details.
+
+## Sets, Result, Related, To fill
+
+- **More**: Revert set, Discard new set, Rename set, Delete set (undoable until Save).
+- **Rename set** is written on Save (a new set is renamed at once): the key and every place your code names it
+  (`sets.X`, `ByName('X')`, `EquipSet('X')`; a `Weapon_` set's mode in WeaponModes/DefaultWeapons/WeaponRoles),
+  optionally with its variants (`X_Acc`). Comments stay. A set found by its own name (`Idle`, an action) is then
+  only worn where your code names it; the dialog warns.
+- **Undo edit** steps back through slot changes; **Undo slot** restores the saved definition.
+- **Result** shows what an action wore, layer by layer: recorded since load, or expected from your sets and modes.
+- **Related** lists the sets and modes for this action; **Make** stages a missing one.
+- **To fill** lists placeholders, missing or unusable items and empty weapon modes; **Fill all** stages one choice
+  for every listed use. When nothing is left, Goomy says so.
+
+## Save
+
+**Save + reload** shows a review (before/after per set, new, deleted and renamed sets, weapon and melee modes);
+cancelling writes nothing. Saving checks the file didn't change on disk and still parses, writes a dated backup,
+then reloads (reopening the editor if ticked). Code-defined or nested sets need a text editor; everything outside
+the gear definitions is kept as written. The newest ten editor backups per file are kept (`EditorBackupKeep` in
+char.lua's `settings`, `0` keeps all). Widths, favorites and density live in the job's `.gcedit-ui` file.

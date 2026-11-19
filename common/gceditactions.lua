@@ -1,0 +1,1511 @@
+-- /gcedit: action, replacement and related-set models (no drawing).
+-- Build action, replacement, and related-set data. No ImGui calls or palette values.
+-- The document and inventory are snapshots owned by the editor; callbacks read slots
+-- and host resources. Drawing code consumes the returned view data.
+local actionModel = {}
+function actionModel.New(context)
+    local document, inventory = context.document, context.inventory
+    local gcdisplay = context.display
+    local SCREEN, SLOT_BIT, NUM_SLOT = context.slots, context.slotBits, context.slotNames
+    local current, has_set, filled, is_ws = context.current, context.hasSet, context.filled, context.isWeaponskill
+    local item_id, read_file, gearEngine = context.itemId, context.readFile, context.engine
+    local jobLines, jobLinesModel
+    local parsed = context.analysis
+    local scan_job, eval_cond, resolve = parsed.Scan, parsed.Evaluate, parsed.Resolve
+    local cycle_of, cycle_text, in_list, STATUS_TEXT =
+        parsed.CycleOf, parsed.CycleText, parsed.InList, parsed.StatusText
+    local function layers_of(r)
+        local layers, final = {}, {}
+        for _, w in ipairs(r.writes) do
+            local slot = NUM_SLOT[w.slot] or tostring(w.slot)
+            local L = layers[#layers]
+            if (L == nil) or (L.by ~= w.by) then
+                L = { by = w.by, why = w.why, reason = w.reason, writes = {} }
+                layers[#layers + 1] = L
+            end
+            local entry = { slot = slot, name = w.name, blocked = w.blocked }
+            L.writes[#L.writes + 1] = entry
+            if not w.blocked then
+                local prev = final[slot]
+                if prev ~= nil then
+                    -- the same piece again is no loss: the earlier layer still put it there
+                    if string.lower(prev.name) == string.lower(w.name) then prev.entry.same = true end
+                    prev.entry.won = false
+                end
+                entry.won = true
+                final[slot] = { name = w.name, by = w.by, entry = entry, layer = L }
+            end
+        end
+        return layers, final
+    end
+
+    local function is_set_label(by, name)
+        local l, n = string.lower(by), string.lower(name)
+        return (l == n) or (string.sub(l, 1, #n + 1) == (n .. '['))
+    end
+
+    -- A record's layer names, lower case, for is_set_label in one lookup: each name and each part before a '['
+    -- (Buffs['Aftermath: Lv.3'] also counts as Buffs). Worked out once per record.
+    local function labels_of(r)
+        local t = r.gcLabels
+        if t ~= nil then return t end
+        t = {}
+        for _, w in ipairs(r.writes) do
+            local l = string.lower(w.by)
+            if t[l] == nil then
+                t[l] = true
+                local at = string.find(l, '[', 1, true)
+                while at ~= nil do
+                    t[string.sub(l, 1, at - 1)] = true
+                    at = string.find(l, '[', at + 1, true)
+                end
+            end
+        end
+        r.gcLabels = t
+        return t
+    end
+
+    -- Records this set was worn in, newest first.
+    local function records_for(name)
+        local out = {}
+        local records = context.getRecords()
+        if records == nil then return out end
+        local n = string.lower(name)
+        for _, key in ipairs(records.order) do
+            local r = records.byKey[key]
+            if (r ~= nil) and (r.job == context.job) and labels_of(r)[n] then out[#out + 1] = r end
+        end
+        table.sort(out, function(x, y) return x.time > y.time end)
+        return out
+    end
+
+    local KIND = {
+        Default = '',
+        Precast = 'spell, start of cast',
+        Midcast = 'spell, as it goes off',
+        Ability = 'job ability',
+        Weaponskill = 'weapon skill',
+        Preshot = 'ranged attack, start',
+        Midshot = 'ranged attack, as it fires',
+        Item = 'item',
+    }
+    local STATUS = { Idle = 'standing idle', Engaged = 'fighting (engaged)', Resting = 'resting' }
+
+    local function action_label(r)
+        if r.event == 'Default' then return STATUS[r.seenKey or r.key] or (r.seenKey or r.key) end
+        if r.expected and (r.label ~= nil) then
+            return r.label
+        end -- expected, no action of its own: 'a weapon skill with no set of its own'
+        return (r.action or '?') .. '  (' .. (KIND[r.event] or r.event) .. ')'
+    end
+
+    local function source_label(by)
+        local engine = string.match(by, '^gcinclude%.sets%.(.+)$')
+        if engine ~= nil then return 'engine set ' .. engine end
+        local fn = string.match(by, '^(.+)%(%)$')
+        if fn ~= nil then
+            return ({
+                WearWeaponLayer = 'Weapon mode',
+                ApplyElementGear = 'Element bonus',
+                EquipIdle = 'Idle gear',
+                EquipMode = 'Combat mode',
+            })[fn] or ('Rule: ' .. fn)
+        end
+        return by
+    end
+
+    -- Why a layer went on, in plain words: from the functions that put it on (rec chain, closest first) and what was
+    -- on at the time (r.state). Each line matches the gcinclude code that does it.
+    local GENERIC = { ByName = true, EquipMode = true, EquipIdle = true }
+    local function why(L, r)
+        local by, st, cfg = L.by, r.state or {}, (gearEngine ~= nil) and gearEngine.settings or {}
+        local engine = string.match(by, '^gcinclude%.sets%.(.+)$')
+        local inner = string.match(by, "%['(.+)'%]$")
+        local fn = nil
+        for _, f in ipairs(L.why or {}) do
+            if not GENERIC[f] then
+                fn = f
+                break
+            end
+        end
+        local first = (L.why or {})[1]
+        local R = {
+            CheckCommonDebuffs = function()
+                if (by == 'Sleeping') or (engine == 'Sleeping') then return 'you are asleep' end
+                if (by == 'Doomed') or (engine == 'Doomed') then return 'Doom or Bane is on you' end
+                return 'a status effect on you'
+            end, CheckIncapacitated = function()
+                return 'slept, petrified, stunned or terrorized: your defense set without weapons, then Incapacitated'
+            end, wear = function()
+                if by == 'Idle_Regen' then
+                    return string.format(
+                        'HP %s%% is below RegenGearHPP %s%%, out of combat',
+                        tostring(st.hpp), tostring(cfg.RegenGearHPP)
+                    )
+                end
+                if by == 'Idle_Refresh' then
+                    return string.format(
+                        'MP %s%% is below RefreshGearMPP %s%%, out of combat',
+                        tostring(st.mpp), tostring(cfg.RefreshGearMPP)
+                    )
+                end
+                if by == 'Dt' then
+                    return string.format('HP %s%% is below DTGearHPP %s%%', tostring(st.hpp), tostring(cfg.DTGearHPP))
+                end
+                if by == 'Pet_Dt' then return 'pet HP below PetDTGearHPP' end
+                return 'HP or MP low'
+            end, SetTownGear = function()
+                return 'you are in a town'
+            end, CheckWeapons = function()
+                return 'weapon mode '
+                    .. tostring(st.weapons or '?')
+                    .. ' (/wm)'
+                    .. ((st.status ~= 'Engaged') and '; not fighting, so weapons your idle sets name win' or '')
+            end, BuildWeaponLayer = function()
+                return 'weapon mode ' .. tostring(st.weapons or '?') .. ' (/wm)'
+            end, CheckMDT = function()
+                return (by == 'mdt') and 'MDT mode (/mdt)' or 'Aminon mode (/aminon)'
+            end, CheckHoxne = function()
+                return 'Hoxne Locked (/hoxne): the Ampulla goes in Ammo'
+            end, CheckTH = function()
+                return 'TH mode (/th): the mob is not tagged yet'
+            end, CheckReceived = function()
+                return 'a spell is coming at you (' .. by .. ')'
+            end, CheckBuffSets = function()
+                return tostring(inner or by) .. ' is up'
+            end, CheckXIRoll = function()
+                return 'standing idle with a roll at 11'
+            end, CheckLockingRings = function()
+                return 'a ring in use stays on (warp, experience...)'
+            end, CheckMoonshade = function()
+                return string.format(
+                    'TP %s is below MoonshadeTP %s: Moonshade adds TP to the WS',
+                    tostring(st.tp), tostring(cfg.MoonshadeTP)
+                )
+            end, ApplyElementGear = function()
+                return 'element bonus: day, weather or distance (obi, Orpheus)'
+            end, CheckSIR = function()
+                return 'SIR mode (/sir): spell interruption'
+            end, CheckLightBonus = function()
+                return 'Healing Magic: LightBonus set'
+            end, CheckAbsorb = function()
+                return 'an Absorb- spell'
+            end, CheckDaybreak = function()
+                return 'Dispelga needs Daybreak in Main'
+            end, StripWeaponSwaps = function()
+                return 'SmartSwap: a light spell keeps your weapons'
+            end, wearHoxneCombos = function()
+                return 'Hoxne Locked + Enchantment up, and the buffs in the name are up'
+            end, CheckHoxneWs = function()
+                return 'Hoxne Locked + Enchantment up: Hoxne WS set'
+            end, WearHoxne = function()
+                local where = string.match(by, '^Hoxne_(%a+)')
+                local tail = ({ Dt = ', DT mode (/dt)', Tp = ', fighting', Idle = ', standing idle' })[where or '']
+                    or ''
+                return 'Hoxne Locked + Enchantment up' .. tail
+            end, CheckHoxneSets = function()
+                return 'Hoxne Locked + Enchantment up'
+            end, WearChildren = function()
+                local key = string.match(by, '_([^_]+)$')
+                if key == 'HighBuff' then return 'WS high-buff mode (/wsset high)' end
+                if key == 'Dt' then return 'DT mode (/dt)' end
+                if key == 'Self' then return 'the spell is on yourself' end
+                if key == 'Others' then return 'the spell is on someone else' end
+                if key == 'Burst' then return 'magic burst: the spell lands in a skillchain' end
+                return 'a child set of one worn before it'
+            end, checkDefault = function()
+                return 'Proc mode (/proc) while fighting'
+            end,
+        }
+        if L.reason ~= nil then
+            return L.reason
+        end -- an expected layer says why itself
+        if (fn ~= nil) and (R[fn] ~= nil) then return R[fn]() end
+        if string.match(by, '^Sub ') then
+            return by
+        end -- 'Sub held: no Dual Wield', 'Sub dropped: ...'
+        -- a set the job file (or a helper) wears by name
+        if first == 'EquipIdle' then
+            if by == 'Idle' then return 'base: Idle goes on first, every time' end
+            return 'idle mode ' .. tostring(st.idleset) .. ' (/idleset), standing idle'
+        end
+        if first == 'EquipMode' then
+            if by == 'Ws_Default' then return 'base: every weapon skill starts with it' end
+            if by == 'Tp_Default' then return 'base while fighting' end
+            if string.match(by, '_Default$') then return 'base set' end
+            return 'melee mode ' .. tostring(st.mset) .. ' (/mset)'
+        end
+        if (st.mset ~= nil) and (st.mset ~= 'Default') and (string.sub(by, -(#st.mset + 1)) == ('_' .. st.mset)) then
+            return 'melee mode ' .. st.mset .. ' (/mset)'
+        end
+        if (r.action ~= nil) and (string.lower(by) == string.lower(r.action)) then
+            return 'the set named after ' .. r.action
+        end
+        if (by == 'Dt') or string.match(by, '^Dt_') then return 'DT mode (/dt)' end
+        if by == 'Movement' then return st.kite and 'kite mode (/kite)' or 'you are moving' end
+        if by == 'Resting' then return 'you are resting' end
+        if string.match(by, '^Tp_') then return 'fighting (engaged)' end
+        if string.match(by, '^Weapon_') then return 'weapon mode ' .. tostring(st.weapons) .. ' (/wm)' end
+        if first == 'ByName' then return 'your job file wears it by name' end
+        return 'your job file puts it on'
+    end
+
+    local function buff_names(st)
+        local out, res = {}, context.resources
+        for _, b in ipairs((st and st.buffs) or {}) do
+            local n = res:GetString('buffs.names', b)
+            if (type(n) == 'string') and (n ~= '') then out[#out + 1] = n end
+        end
+        return out
+    end
+
+    -- An item as the game spells it ('naegling' -> 'Naegling'): from your bags, else the item's resource, else as
+    -- written.
+    local function game_name(n)
+        local g = (inventory.firstByName ~= nil) and inventory.firstByName[string.lower(n)] or nil
+        if g ~= nil then return g.name end
+        local id = item_id(n)
+        local r = (id ~= nil) and context.resources:GetItemById(id) or nil
+        if (r ~= nil) and (r.Name ~= nil) and (type(r.Name[1]) == 'string') and (r.Name[1] ~= '') then
+            return r.Name[1]
+        end
+        return n
+    end
+
+    -- The picked record, worked out for drawing: the cover per slot, the table rows, the order list, the missing sets.
+    local function layer_view(set, pick)
+        if jobLinesModel ~= document.model then jobLines, jobLinesModel = nil, document.model end
+        local V = { rec = pick, set = set.name, ver = document.revision }
+        local layers, final = layers_of(pick)
+        local mineLost = {} -- this set's piece in a slot, when a later set replaced it
+        for _, L in ipairs(layers) do
+            if is_set_label(L.by, set.name) then
+                for _, w in ipairs(L.writes) do
+                    if not w.won and not w.same then mineLost[w.slot] = { name = w.name, blocked = w.blocked } end
+                end
+            end
+        end
+        V.cover = {}
+        for slot, m in pairs(mineLost) do
+            local by = (final[slot] ~= nil) and final[slot].by or '?'
+            local short = string.match(by, '^gcinclude%.sets%.(.+)$') or string.match(by, '^(.+)%(%)$') or by
+            V.cover[slot] = m.blocked and { short = 'a lock', full = 'a locked slot' }
+                or { short = short, full = source_label(by) }
+        end
+        V.head = 'For ' .. action_label(pick) .. ':'
+        if pick.expected then
+            local st, on = pick.state, {}
+            if (st.mset ~= nil) and (st.mset ~= 'Default') then on[#on + 1] = 'melee ' .. st.mset end
+            if (st.idleset ~= nil) and (st.idleset ~= 'Default') then on[#on + 1] = 'idle ' .. st.idleset end
+            if st.wsset == 'High' then on[#on + 1] = 'WS high-buff' end
+            if st.dt then on[#on + 1] = 'DT' end
+            if st.kite then on[#on + 1] = 'kite' end
+            if st.proc then on[#on + 1] = 'proc' end
+            V.head = 'Expected for ' .. action_label(pick) .. ' (not seen since load):'
+            V.state = 'Modes now: '
+                .. ((#on > 0) and table.concat(on, ', ') or 'none')
+                .. ((pick.as ~= nil) and ('  (' .. pick.as .. ')') or '')
+            V.buffs =
+                "Your sets as the editor has them, unsaved changes too.\nLeft out until seen: weapons (/wm), Moonshade, obi, TH, buffs, Hoxne, your job file's own logic."
+        elseif pick.state ~= nil then
+            local st, on = pick.state, {}
+            if (st.mset ~= nil) and (st.mset ~= 'Default') then on[#on + 1] = 'melee ' .. st.mset end
+            if st.wsset == 'High' then on[#on + 1] = 'WS high-buff' end
+            if st.dt then on[#on + 1] = 'DT' end
+            if st.mdt then on[#on + 1] = 'MDT' end
+            if st.aminon then on[#on + 1] = 'Aminon' end
+            if st.kite then on[#on + 1] = 'kite' end
+            if st.th then on[#on + 1] = 'TH' end
+            if st.sir then on[#on + 1] = 'SIR' end
+            if st.proc then on[#on + 1] = 'proc' end
+            if st.hoxne == 'Locked' then on[#on + 1] = 'Hoxne' end
+            V.state = string.format(
+                'At the time: HP %s%%  MP %s%%  TP %s  |  weapons %s  |  modes on: %s',
+                tostring(st.hpp),
+                tostring(st.mpp),
+                tostring(st.tp), tostring(st.weapons or '-'), (#on > 0) and table.concat(on, ', ') or 'none'
+            )
+            local bn = buff_names(st)
+            if #bn > 0 then V.buffs = 'Buffs/effects on you: ' .. table.concat(bn, ', ') end
+        end
+        local num = {} -- layer -> its number in the order list
+        for i, L in ipairs(layers) do
+            num[L] = i
+        end
+        V.rows, V.still = {}, {}
+        for _, slot in ipairs(SCREEN) do
+            local f = final[slot]
+            if (f == nil) and (mineLost[slot] == nil) then
+                V.still[#V.still + 1] = slot -- slots no set touched, on one row
+            else
+                local row = { slot = slot }
+                if f == nil then
+                    row.worn, row.src, row.sourceRole = nil, 'no set: keeps what you had on', 'dim'
+                else
+                    row.worn = (f.name == 'ignore') and '(left empty)' or game_name(f.name)
+                    local n = ((f.layer ~= nil) and num[f.layer]) and (num[f.layer] .. '. ') or ''
+                    if is_set_label(f.by, set.name) then
+                        row.src, row.sourceRole = n .. 'this set', 'blue'
+                    else
+                        local lab = source_label(f.by)
+                        row.src, row.sourceRole = n .. lab, string.match(lab, '^engine ') and 'dim' or 'text'
+                    end
+                end
+                local m = mineLost[slot]
+                if m ~= nil then
+                    row.replacedName = game_name(m.name)
+                    row.locked = m.blocked
+                end
+                V.rows[#V.rows + 1] = row
+            end
+        end
+        V.still = (#V.still > 0) and table.concat(V.still, ' ') or nil
+        V.order = {}
+        for i, L in ipairs(layers) do
+            local won, same, lost = {}, {}, {}
+            for _, w in ipairs(L.writes) do
+                if w.won then
+                    won[#won + 1] = w.slot
+                elseif w.same then
+                    same[#same + 1] = w.slot
+                else
+                    lost[#lost + 1] = w.slot
+                end
+            end
+            V.order[i] = {
+                title = i .. '. ' .. source_label(L.by),
+                rawSource = L.by,
+                mine = is_set_label(L.by, set.name),
+                why = 'why: ' .. why(L, pick),
+                won = (#won > 0) and ('kept: ' .. table.concat(won, ' ')) or nil,
+                same = (#same > 0) and ('same piece put on again later: ' .. table.concat(same, ' ')) or nil,
+                lost = (#lost > 0) and ('replaced later: ' .. table.concat(lost, ' ')) or nil,
+            }
+        end
+        -- sets looked for and not there: why each was looked for, and what goes on without it
+        V.missing, V.variants = {}, {}
+        local VARIANT = {
+            Self = 'the spell is on you',
+            Others = 'the spell is on someone else',
+            Burst = 'a magic burst',
+            HighBuff = '/wsset high',
+        }
+        for _, n in ipairs(pick.misses or {}) do
+            if (string.find(string.lower(n), '_default_', 1, true) == nil) and not has_set(n) then
+                local base, key = string.match(n, '^(.+)_(%a+)$')
+                local line = (pick.missLine ~= nil) and pick.missLine[string.lower(n)] or nil
+                if (base ~= nil) and (VARIANT[key] ~= nil) and has_set(base) then
+                    V.variants[#V.variants + 1] = {
+                        name = n,
+                        why = 'over '
+                            .. base
+                            .. ' when '
+                            .. VARIANT[key]
+                            .. '. Without it: '
+                            .. base
+                            .. ' alone.',
+                    }
+                else
+                    local m = { name = n, why = 'looked for during this action. Without it: the sets above stay.' }
+                    if line ~= nil then
+                        jobLines = jobLines or {}
+                        if jobLines[0] == nil then
+                            local t = read_file(document.path) or ''
+                            jobLines[0] = true
+                            local i = 0
+                            for l in string.gmatch(t .. '\n', '(.-)\r?\n') do
+                                i = i + 1
+                                jobLines[i] = l
+                            end
+                        end
+                        local code = string.match(jobLines[line] or '', '^%s*(.-)%s*$') or ''
+                        m.why = 'your job file looks for it, line '
+                            .. line .. ':\n  ' .. code .. '\nWithout it: the sets above stay.'
+                    end
+                    V.missing[#V.missing + 1] = m
+                end
+            end
+        end
+        return V
+    end
+
+    local SLOT_NUM = {}
+    for name, b in pairs(SLOT_BIT) do
+        SLOT_NUM[name] = b + 1
+    end
+    -- Spell skill ids (the spell resource's Skill) to the names LAC's spell.Skill gives (Windower res skills 32-45).
+    local SKILL = {
+        [32] = 'Divine Magic',
+        [33] = 'Healing Magic',
+        [34] = 'Enhancing Magic',
+        [35] = 'Enfeebling Magic',
+        [36] = 'Elemental Magic',
+        [37] = 'Dark Magic',
+        [38] = 'Summoning Magic',
+        [39] = 'Ninjutsu',
+        [40] = 'Singing',
+        [41] = 'String Instrument',
+        [42] = 'Wind Instrument',
+        [43] = 'Blue Magic',
+        [44] = 'Geomancy',
+        [45] = 'Handbell',
+    }
+    local SKILL_OF = {}
+    for _, n in pairs(SKILL) do
+        SKILL_OF[string.lower(n)] = n
+    end
+
+    local family = gearEngine.Family -- 'Utsusemi: Ni' -> 'Utsusemi', 'Cure IV' -> 'Cure'
+
+    local function modes_now() -- as gcaction's snapshot reads them
+        local st = {}
+        if gcdisplay == nil then return st end
+        local function cyc(n)
+            local v = gcdisplay.GetCycle(n)
+            return (v ~= 'Unknown') and v or nil
+        end
+        st.mset, st.wsset, st.idleset, st.hoxne = cyc('MeleeSet'), cyc('WsSet'), cyc('IdleSet'), cyc('Hoxne')
+        st.weapons = cyc('Weapons') or cyc('Main')
+        st.wmode = cyc('Weapons')
+        st.dt, st.kite, st.proc =
+            gcdisplay.GetToggle('DTset') == true,
+            gcdisplay.GetToggle('Kite') == true, gcdisplay.GetToggle('PROC') == true
+        return st
+    end
+
+    -- The action a set is for, and the modes to show it under: { event, key, action, label, as } or nil.
+    -- A mode set (Tp_Acc, Idle_Regen, Savage Blade_HighBuff) is shown as if its mode were on ('as').
+    -- A weapon mode by name (any case): one of the game's /wm values, or a Weapon_<name> set in the file. nil: none.
+    local function weapon_of(name)
+        local lname = string.lower(name)
+        for _, v in ipairs(((gcdisplay ~= nil) and gcdisplay.GetCycleValues('Weapons')) or {}) do
+            if (string.lower(v) == lname) and (lname ~= 'none') then return v end
+        end
+        local set = document.model.byLower['weapon_' .. lname]
+        return (set ~= nil) and string.sub(set.name, 8) or nil
+    end
+    local HANDS = { ['2h'] = 'a two-handed weapon', ['1h'] = 'a one-handed weapon' }
+    -- The weapon modes: gcinclude.WeaponModes for the loaded job, then the file's other Weapon_<mode> sets.
+    local function weapon_modes()
+        local out, seen = {}, {}
+        local function add(m)
+            if (type(m) == 'string') and (m ~= 'None') and not seen[string.lower(m)] then
+                seen[string.lower(m)], out[#out + 1] = true, m
+            end
+        end
+        local p = context.getPlayer()
+        if (gearEngine ~= nil) and (type(gearEngine.WeaponModes) == 'table') and (p ~= nil)
+            and (context.job == p:GetMainJob()) then
+            for _, m in ipairs(gearEngine.WeaponModes) do add(m) end
+        end
+        for _, s in ipairs(document.model.list) do add(string.match(s.name, '^Weapon_([^_]+)$')) end
+        return out
+    end
+    -- name split at its first _ whose left part is an action (Savage Blade_Naegling_Acc: Savage Blade,
+    -- Naegling_Acc). nil when no part is.
+    local function split_action(n, is_action)
+        local at = 1
+        while true do
+            local i = string.find(n, '_', at, true)
+            if i == nil then return nil end
+            if is_action(string.sub(n, 1, i - 1)) then return string.sub(n, 1, i - 1), string.sub(n, i + 1) end
+            at = i + 1
+        end
+    end
+
+    local function action_for(set, st)
+        local n, res = set.name, context.resources
+        local function mset_of(suffix, weaponToo) -- weaponToo: Tp_/Ws_ (EquipMode) also take a weapon mode
+            if suffix == 'HighBuff' then
+                st.wsset = 'High'
+                return 'as if WS high-buff mode (/wsset high)'
+            end
+            if suffix == 'Dt' then
+                st.dt = true
+                return 'as if DT mode (/dt)'
+            end
+            if suffix == 'Proc' then
+                st.proc = true
+                return 'as if proc mode (/proc)'
+            end
+            -- a weapon mode (Tp_Chango), or a weapon mode and a melee mode (Tp_Chango_Acc); a weapon type (Tp_2h)
+            local h = weaponToo and HANDS[string.lower(suffix)] and string.lower(suffix) or nil
+            if h ~= nil then
+                st.hands = h
+                return 'as if ' .. HANDS[h] .. ' with no set of its own is on'
+            end
+            local w = weaponToo and weapon_of(suffix) or nil
+            if w ~= nil then
+                st.wmode = w
+                return 'as if weapon mode ' .. w .. ' (/wm)'
+            end
+            local wpart, mpart = string.match(suffix, '^(.+)_([^_]+)$')
+            local h2 = (weaponToo and (wpart ~= nil) and HANDS[string.lower(wpart)]) and string.lower(wpart) or nil
+            if h2 ~= nil then
+                st.hands = h2
+                return 'as if ' .. HANDS[h2] .. ' with no set of its own is on, ' .. mset_of(mpart)
+            end
+            local w2 = (weaponToo and (wpart ~= nil)) and weapon_of(wpart) or nil
+            if w2 ~= nil then
+                st.wmode = w2
+                return 'as if weapon mode ' .. w2 .. ' (/wm), ' .. mset_of(mpart)
+            end
+            local modes = {}
+            for _, m in ipairs(((gcdisplay ~= nil) and gcdisplay.GetCycleValues('MeleeSet')) or {}) do
+                modes[#modes + 1] = m
+            end
+            for _, m in ipairs(document.newModes or {}) do
+                modes[#modes + 1] = m
+            end
+            for _, m in ipairs(modes) do
+                if string.lower(m) == string.lower(suffix) then
+                    st.mset = m
+                    return 'as if melee mode ' .. m .. ' (/mset)'
+                end
+            end
+            -- not a mode (MNK's _Impetus, _Footwork): the job file wears it by its own logic, which this view leaves
+            -- out
+            return n .. ' is no mode: your job file wears it by its own logic, not shown here'
+        end
+        if n == 'Idle' then return { event = 'Default', key = 'Idle' } end
+        -- Idle_<weapon> / Idle_2h, then with an idle mode (Idle_Chango_Refresh); else Idle_<mode>
+        local iw, irest = string.match(n, '^Idle_([^_]+)_?(.*)$')
+        if (iw ~= nil) and (HANDS[string.lower(iw)] or weapon_of(iw)) then
+            local as
+            if HANDS[string.lower(iw)] then
+                st.hands = string.lower(iw)
+                as = 'as if ' .. HANDS[st.hands] .. ' with no set of its own is on'
+            else
+                st.wmode = weapon_of(iw)
+                as = 'as if weapon mode ' .. st.wmode .. ' (/wm)'
+            end
+            if string.match(irest, '^%a+$') then
+                st.idleset = irest
+                as = as .. ', idle mode ' .. irest .. ' (/idleset)'
+            end
+            return { event = 'Default', key = 'Idle', as = as }
+        end
+        local im = string.match(n, '^Idle_(%a+)$')
+        if im ~= nil then
+            st.idleset = im
+            return { event = 'Default', key = 'Idle', as = 'as if idle mode ' .. im .. ' (/idleset)' }
+        end
+        if n == 'Dt' then
+            st.dt = true
+            return { event = 'Default', key = 'Idle', as = 'as if DT mode (/dt)' }
+        end
+        local dsuf = string.match(n, '^Dt_(.+)$') -- ByName('Dt'): Dt_Chango, Dt_2h, Dt_Acc, Dt_Chango_Acc
+        if dsuf ~= nil then
+            st.dt = true
+            return { event = 'Default', key = 'Idle', as = mset_of(dsuf, true), dt = true }
+        end
+        if n == 'Movement' then
+            st.kite = true
+            return { event = 'Default', key = 'Idle', as = 'as if kite mode (/kite)' }
+        end
+        if n == 'Resting' then return { event = 'Default', key = 'Resting' } end
+        if n == 'Tp_Default' then return { event = 'Default', key = 'Engaged' } end
+        local tm = string.match(n, '^Tp_(.+)$')
+        if tm ~= nil then return { event = 'Default', key = 'Engaged', as = mset_of(tm, true) } end
+        if n == 'Ws_Default' then
+            return { event = 'Weaponskill', action = nil, label = 'a weapon skill with no set of its own' }
+        end
+        local wm = string.match(n, '^Ws_(.+)$')
+        if wm ~= nil then
+            return { event = 'Weaponskill', label = 'a weapon skill with no set of its own', as = mset_of(wm, true) }
+        end
+        if is_ws(n) then return { event = 'Weaponskill', action = n } end
+        local wb, wsuf = split_action(n, is_ws) -- Savage Blade_Acc, Savage Blade_Naegling, Savage Blade_Naegling_Acc
+        if wb ~= nil then return { event = 'Weaponskill', action = wb, as = mset_of(wsuf, true) } end
+        if n == 'Precast' then
+            return { event = 'Precast', label = 'a spell with no sets of its own, start of cast' }
+        end
+        if n == 'Midcast' then
+            return { event = 'Midcast', label = 'a spell with no sets of its own, as it goes off' }
+        end
+        local sk = SKILL_OF[string.lower(n)]
+        if sk ~= nil then
+            return { event = 'Midcast', label = 'any ' .. sk .. ' spell with no set of its own', skill = sk }
+        end
+        local pre = string.match(n, '^(.+)_Precast$')
+        if pre ~= nil then
+            local psk = SKILL_OF[string.lower(pre)]
+            if psk ~= nil then
+                return { event = 'Precast', label = 'any ' .. psk .. ' spell, start of cast', skill = psk }
+            end
+            local r = res:GetSpellByName(pre, 0)
+            if r ~= nil then return { event = 'Precast', action = pre, skill = SKILL[r.Skill] } end
+        end
+        local sp = res:GetSpellByName(n, 0)
+        if sp ~= nil then return { event = 'Midcast', action = n, skill = SKILL[sp.Skill] } end
+        if res:GetAbilityByName(n, 0) ~= nil then return { event = 'Ability', action = n } end
+        local ab, asuf = split_action(n, function(b) return res:GetAbilityByName(b, 0) ~= nil end)
+        if ab ~= nil then return { event = 'Ability', action = ab, as = mset_of(asuf, true) } end
+        return nil
+    end
+
+    -- The name set's copy for weapon mode w (or '2h' / '1h') takes: Tp_Default -> Tp_Chango, Tp_Acc -> Tp_Chango_Acc,
+    -- Idle_Refresh -> Idle_Chango_Refresh, Savage Blade -> Savage Blade_Chango. nil: no base for one (a spell, a
+    -- weapon set, one already for a weapon).
+    local function variant_name(set, w)
+        local n, l = set.name, string.lower(set.name)
+        if (l == 'tp_default') or (l == 'ws_default') then return string.sub(n, 1, 2) .. '_' .. w end
+        if (n == 'Idle') or (n == 'Dt') then return n .. '_' .. w end
+        local st = {}
+        local a = action_for(set, st)
+        if (a == nil) or (st.wmode ~= nil) or (st.hands ~= nil) or st.proc or (st.wsset ~= nil) then return nil end
+        local byName = ((a.event == 'Weaponskill') or (a.event == 'Ability')) and (a.action ~= nil)
+        if byName and (a.action == n) then return n .. '_' .. w end
+        local mode = st.mset or st.idleset
+        local base = (mode ~= nil) and string.sub(n, 1, #n - #mode - 1) or nil
+        if (base == nil) or (string.lower(string.sub(n, -#mode)) ~= string.lower(mode)) then return nil end
+        local lb = string.lower(base)
+        if byName or (lb == 'tp') or (lb == 'ws') or (lb == 'dt') or ((lb == 'idle') and (st.idleset ~= nil)) then
+            return base .. '_' .. w .. '_' .. string.sub(n, -#mode)
+        end
+        return nil
+    end
+
+    -- A plain-language summary for the set header. The order and overwrite details remain in Equipped result.
+    local function when_description(set)
+        local a = action_for(set, modes_now())
+        if a == nil then
+            return 'No built-in trigger was found. This set is worn only if your job file explicitly equips or combines it; inspect its Handle functions.'
+        end
+        local description
+        if a.event == 'Midcast' then
+            if a.action ~= nil then
+                description = 'When ' .. a.action .. ' goes off (midcast).'
+            elseif a.skill ~= nil then
+                description = 'When any ' .. a.skill .. ' spell goes off (midcast).'
+            else
+                description =
+                    'Every spell, as it goes off (midcast). This is the base layer; skill- and spell-specific sets go on afterward and can replace its slots. Empty slots keep the gear already worn, including Precast gear.'
+            end
+        elseif a.event == 'Precast' then
+            if a.action ~= nil then
+                description = 'At the start of ' .. a.action .. "'s cast (precast)."
+            elseif a.skill ~= nil then
+                description = 'At the start of any ' .. a.skill .. ' spell (precast).'
+            else
+                description = 'At the start of every spell cast (precast).'
+            end
+        elseif a.event == 'Weaponskill' then
+            description = (a.action ~= nil) and ('When using ' .. a.action .. '.') or 'When using a weapon skill.'
+        elseif a.event == 'Ability' then
+            description = 'When using ' .. (a.action or 'this ability') .. '.'
+        elseif a.event == 'Default' then
+            if a.dt or (set.name == 'Dt') then
+                description = 'When DT mode is active.'
+            elseif set.name == 'Movement' then
+                description = 'When kite mode is active.'
+            elseif a.key == 'Idle' then
+                description = 'While standing idle.'
+            elseif a.key == 'Engaged' then
+                description = 'While engaged in combat.'
+            elseif a.key == 'Resting' then
+                description = 'While resting.'
+            end
+        end
+        description = description or a.label
+        if (description ~= nil) and (a.as ~= nil) and (set.name ~= 'Dt') and (set.name ~= 'Movement') then
+            description = description .. ' (' .. a.as .. ')'
+        end
+        return description
+    end
+
+    -- An expected record for the set's action (the shape gcaction records have, plus expected = true), or nil.
+    local function expected_for(set, preview)
+        local st = preview and { mset = 'Default', idleset = 'Default', wsset = 'Default' } or modes_now()
+        local a = action_for(set, st)
+        if a == nil then return nil end
+        local steps, misses = {}, {}
+        -- FindSet: worn when the file has it, else a miss (direct: sets.X, no lookup)
+        local function look(name, reason, direct)
+            if has_set(name) then
+                steps[#steps + 1] = { name = document.model.byLower[string.lower(name)].name, why = reason }
+                return true
+            end
+            if not direct then misses[#misses + 1] = name end
+            return false
+        end
+        local w = ((st.wmode ~= nil) and (st.wmode ~= 'None')) and st.wmode or nil
+        -- the Main's type for <name>_2h / _1h: a set shown as one, else the weapon mode's Weapon_ set, else worn
+        local function hands()
+            if st.hands ~= nil then return st.hands end
+            if w ~= nil then
+                local ws = document.model.byLower['weapon_' .. string.lower(w)]
+                local v = (ws ~= nil) and current(ws, 'Main') or nil
+                local r = ((v ~= nil) and (v.kind == 'item')) and context.resources:GetItemByName(v.name, 0) or nil
+                local two, one = gearEngine.TwoHandSkills, gearEngine.OneHandSkills
+                if (r == nil) or (two == nil) or (one == nil) then return nil end
+                if two:contains(r.Skill) then return '2h' end
+                return one:contains(r.Skill) and '1h' or nil
+            end
+            return (gearEngine.MainHands ~= nil) and gearEngine.MainHands() or nil
+        end
+        -- <name>_<weapon><suffix>, else <name>_2h / _1h<suffix> (gcinclude weaponVariant). optional: no miss.
+        local function weapon_layer(name, suffix, also, optional)
+            if (w ~= nil) and look(name .. '_' .. w .. suffix, 'weapon mode ' .. w .. ' (/wm)' .. also, optional) then
+                return
+            end
+            local h = hands()
+            if h ~= nil then
+                look(name .. '_' .. h .. suffix, HANDS[h] .. ' with no set of its own' .. also, true)
+            end
+        end
+        local function mode(prefix) -- EquipMode
+            look(
+                prefix .. '_Default',
+                (prefix == 'Ws') and 'base: every weapon skill starts with it' or 'base while fighting'
+            )
+            weapon_layer(prefix, '', '')
+            if (st.mset ~= nil) and (st.mset ~= 'Default') then
+                look(prefix .. '_' .. st.mset, 'melee mode ' .. st.mset .. ' (/mset)')
+                weapon_layer(prefix, '_' .. st.mset, ' with melee mode ' .. st.mset, w == nil)
+            end
+        end
+        local function variants(n) -- ByName after its set: weapon, /mset, both
+            weapon_layer(n, '', '', true)
+            if (st.mset ~= nil) and (st.mset ~= 'Default') then
+                look(n .. '_' .. st.mset, 'melee mode ' .. st.mset .. ' (/mset)')
+                weapon_layer(n, '_' .. st.mset, ' with melee mode ' .. st.mset, true)
+            end
+        end
+        local function byname(n, reason) -- ByName
+            if not has_set(n) then
+                misses[#misses + 1] = n
+                return false
+            end
+            look(n, reason)
+            variants(n)
+            return true
+        end
+        if a.event == 'Default' then
+            look('Idle', 'base: Idle goes on first, every time')
+            weapon_layer('Idle', '', '', true)
+            if (a.key == 'Idle') and (st.idleset ~= nil) and (st.idleset ~= 'Default') then
+                look('Idle_' .. st.idleset, 'idle mode ' .. st.idleset .. ' (/idleset), standing idle')
+                weapon_layer('Idle', '_' .. st.idleset, ' with idle mode ' .. st.idleset, true)
+            end
+            if a.key == 'Engaged' then mode('Tp') end
+            if a.key == 'Resting' then look('Resting', 'you are resting', true) end
+            if st.dt and look('Dt', 'DT mode (/dt)', true) then variants('Dt') end
+            if st.kite then look('Movement', 'kite mode (/kite)', true) end
+            if st.proc and (a.key == 'Engaged') then -- /proc: Proc in place of all of it (then the weapon mode)
+                steps = {}
+                look('Proc', 'Proc mode (/proc): in place of your engaged sets', true)
+            end
+        elseif a.event == 'Weaponskill' then
+            mode('Ws')
+            if a.action ~= nil then byname(a.action, 'the set named after ' .. a.action) end
+            if st.proc then -- /proc drops the WS gear above: only the proc set, then its _Dt
+                steps = {}
+                if filled('Ws_Proc') then
+                    look('Ws_Proc', 'Proc mode (/proc): in place of the WS gear')
+                else
+                    look('Proc', 'Proc mode (/proc): in place of the WS gear, no gear in Ws_Proc')
+                end
+            end
+            local worn = {}
+            for _, step in ipairs(steps) do
+                worn[#worn + 1] = step.name
+            end
+            -- WearChildren: each worn n: n_<key>, and <prefix>_<key> for <prefix>_Default
+            local function children(key, reason)
+                local done = {}
+                for _, n in ipairs(worn) do
+                    local prefix = string.match(n, '^(.-)_[Dd][Ee][Ff][Aa][Uu][Ll][Tt]$')
+                    for _, cand in ipairs({ n .. '_' .. key, (prefix ~= nil) and (prefix .. '_' .. key) or nil, }) do
+                        local l = string.lower(cand)
+                        if not done[l] and has_set(cand) then
+                            done[l] = true
+                            look(cand, reason)
+                        end
+                    end
+                end
+            end
+            if (st.wsset == 'High') and not st.proc then children('HighBuff', 'WS high-buff mode (/wsset high)') end
+            if st.dt and not st.proc then children('Dt', 'DT mode (/dt)') end
+        elseif a.event == 'Ability' then
+            byname(a.action, 'the set named after ' .. a.action)
+        elseif a.event == 'Precast' then
+            look('Precast', 'base: every spell starts with it', true)
+            if a.skill ~= nil then byname(a.skill .. '_Precast', a.skill .. ": the skill's precast set") end
+            if a.action ~= nil then byname(family(a.action) .. '_Precast', "the spell's own precast set") end
+        elseif a.event == 'Midcast' then
+            look('Midcast', 'base: every spell goes off in it', true)
+            if a.skill ~= nil then byname(a.skill, a.skill .. ": the skill's set") end
+            if (a.action ~= nil) and not byname(a.action, 'the set named after ' .. a.action) then
+                byname(family(a.action), "the spell's family (" .. family(a.action) .. ')')
+            end
+        end
+        if preview then return steps, a end
+        local writes = {}
+        for _, step in ipairs(steps) do
+            local es = document.model.byName[step.name]
+            if (es ~= nil) and (es.code == nil) then
+                for _, slot in ipairs(SCREEN) do
+                    local v = current(es, slot)
+                    if (v ~= nil) and (v.kind == 'item') then
+                        writes[#writes + 1] =
+                            { slot = SLOT_NUM[slot], name = v.name, by = step.name, reason = step.why }
+                    end
+                end
+            end
+        end
+        local key = (a.event == 'Default') and a.key or ((a.action ~= nil) and (a.event .. ' ' .. a.action) or nil)
+        return {
+            expected = true,
+            key = 'expected ' .. tostring(key),
+            seenKey = key,
+            event = a.event,
+            action = a.action or a.label,
+            writes = writes,
+            misses = misses,
+            state = st,
+            as = a.as,
+            label = a.label,
+        }
+    end
+
+    -- Resolve definitions, not recorded item names: selectors and pending edits survive.
+    -- Preview routes use neutral modes with the selected variant assumed active.
+    local function equipment_for(set, baseName, definitionsOnly)
+        local result = { definitions = {}, sources = {}, layers = {}, warnings = {}, pending = false,
+            layered = not definitionsOnly, base = baseName }
+        local omitted = {}
+        local function lookup(name)
+            return name and document.model.byLower[string.lower(name)] or nil
+        end
+        local function route(candidate)
+            local steps, action = expected_for(candidate, true)
+            if steps then return steps, action, true end
+            local parent = lookup(candidate.name:match('^(.+)_[^_]+$'))
+            if parent then
+                local inherited, event, known = route(parent)
+                if known then
+                    inherited[#inherited + 1] = { name = candidate.name, why = 'selected variant assumed active' }
+                    return inherited, event, true
+                end
+            end
+            local name = string.lower(candidate.name)
+            if name == 'town' then
+                return { { name = 'Idle' }, { name = candidate.name } }, { event = 'Default' }, true
+            elseif name == 'preshot' or name == 'midshot' then
+                local ranged = { { name = 'Preshot' } }
+                if name == 'midshot' then ranged[#ranged + 1] = { name = candidate.name } end
+                return ranged, { event = 'Ranged' }, true
+            elseif name:match('^weapon_') then
+                return { { name = candidate.name } }, { event = 'Weapon' }, true
+            end
+            return { { name = candidate.name } }, nil, false
+        end
+        local function apply(name)
+            local layer = lookup(name)
+            if not layer then return end
+            local deleted = document.deleted and document.deleted[layer.name]
+            if layer.new or document.edits[layer.name] or deleted then result.pending = true end
+            if deleted then
+                if not omitted[layer.name] then
+                    result.warnings[#result.warnings + 1] = layer.name .. ' is pending deletion and was omitted.'
+                    omitted[layer.name] = true
+                end
+                return
+            end
+            if result.layers[#result.layers] == layer.name then return end
+            result.layers[#result.layers + 1] = layer.name
+            if layer.code or layer.extra then
+                result.warnings[#result.warnings + 1] = layer.name
+                    .. ' contains Lua/nested gear; affected slots are unknown.'
+                for _, slot in ipairs(SCREEN) do
+                    result.definitions[slot], result.sources[slot] = { kind = 'code',
+                        raw = layer.code or 'nested set' }, layer.name
+                end
+                return
+            end
+            for _, slot in ipairs(SCREEN) do
+                local value = current(layer, slot)
+                if value then result.definitions[slot], result.sources[slot] = value, layer.name end
+            end
+        end
+        if definitionsOnly then apply(set.name); return result end
+        local steps, action, known = route(set)
+        if baseName then
+            local base = lookup(baseName)
+            if base then
+                local first, _, baseKnown = route(base)
+                if baseKnown then apply('Idle') end
+                for _, step in ipairs(first) do apply(step.name) end
+                apply(base.name)
+                if not baseKnown then
+                    result.warnings[#result.warnings + 1] = 'Chosen base uses its definition; its custom parent order is unknown.'
+                end
+            else result.warnings[#result.warnings + 1] = 'Chosen base is unavailable: ' .. baseName end
+        elseif known then
+            apply('Idle')
+            if action and action.event == 'Weaponskill' then apply('Tp_Default') end
+        end
+        if action and action.event == 'Midcast' then
+            local precast = { name = action.action and (action.action .. '_Precast')
+                or action.skill and (action.skill .. '_Precast') or 'Precast' }
+            local before = expected_for(precast, true)
+            for _, step in ipairs(before or {}) do apply(step.name) end
+        end
+        for _, step in ipairs(steps) do
+            if not baseName or string.lower(step.name) ~= 'idle' or string.lower(set.name) == 'idle' then
+                apply(step.name)
+            end
+        end
+        local included = false
+        for _, name in ipairs(result.layers) do if name == set.name then included = true; break end end
+        if not included then apply(set.name) end
+        if not known and not baseName then
+            result.warnings[#result.warnings + 1] = 'Custom layer order is unknown. Only this definition is shown; choose a base to preview an overlay.'
+            result.layered = false
+        end
+        return result
+    end
+
+    local function child(n, key) -- WearChildren's name: X_Default's child is X_<key>
+        local prefix = string.match(n, '^(.-)_[Dd][Ee][Ff][Aa][Uu][Ll][Tt]$')
+        return ((prefix ~= nil) and prefix or n) .. '_' .. key
+    end
+
+    -- The buff combos a Hoxne base takes: each buff alone, and all of them together (A&B, A-Z) when more than one.
+    local function combos(buffs)
+        local out = {}
+        for _, b in ipairs(buffs) do
+            out[#out + 1] = b
+        end
+        if #buffs > 1 then
+            local all = {}
+            for _, b in ipairs(buffs) do
+                all[#all + 1] = b
+            end
+            table.sort(all)
+            out[#out + 1] = table.concat(all, '&')
+        end
+        return out
+    end
+
+    local DEFAULT_KEY = {
+        Idle = 'Idle',
+        Resting = 'Resting',
+        Town = 'Idle',
+        XIRoll = 'Idle',
+        Tp_Default = 'Engaged',
+        Proc = 'Engaged',
+    }
+    local ENGINE_DEFAULT = {
+        mdt = true,
+        Aminon = true,
+        TH = true,
+        Incapacitated = true,
+        Sleeping = true,
+        Doomed = true,
+        Pet_Dt = true,
+        Dt = true,
+        Movement = true,
+    }
+    local function what_if(set, o)
+        local out, seen, notes, dyn = {}, {}, {}, {}
+        local function rank(c) -- one order for every heading: state, modes, Hoxne, buffs, the rest
+            if STATUS_TEXT[string.gsub(c, '^%l', string.upper)] or (c == 'moving') or string.match(c, '^idle mode') then
+                return 1
+            end
+            if string.match(c, '^melee mode') then return 2 end
+            if c == 'WS high-buff mode' then return 3 end
+            if c == 'DT mode' then return 4 end
+            if c == 'proc mode' then return 5 end
+            if c == 'Hoxne' then return 6 end
+            if string.match(c, ' up$') then return 7 end
+            return 8
+        end
+        local msetOn = {}
+        for _, m in ipairs(o.msets) do
+            msetOn[m] = true
+        end
+        local function allowed(conds) -- the modes ticked (Every mode: all of them)
+            for _, c in ipairs(conds) do
+                local m = string.match(c, '^melee mode (.+)$')
+                if (m ~= nil) and not msetOn[m] then return false end
+                if ((c == 'DT mode') and not o.dt) or ((c == 'proc mode') and not o.proc)
+                    or ((c == 'WS high-buff mode') and not o.high) or ((c == 'Hoxne') and not o.hoxne) then
+                    return false
+                end
+            end
+            return true
+        end
+        local function add(name, conds, parent, extra)
+            if (name == nil) or (name == '') or not allowed(conds) then return false end
+            local l = string.lower(name)
+            if seen[l] then return true end
+            seen[l] = true
+            local sorted, dup = {}, {}
+            for _, c in ipairs(conds) do
+                if not dup[c] then
+                    dup[c] = true
+                    sorted[#sorted + 1] = c
+                end
+            end
+            table.sort(sorted, function(x, y) if rank(x) ~= rank(y) then return rank(x) < rank(y) end return x < y end)
+            local w = { name = name, conds = sorted, parent = parent, self = (l == set.lname) }
+            for k, v in pairs(extra or {}) do
+                w[k] = v
+            end
+            out[#out + 1] = w
+            return true
+        end
+        local function plus(conds, ...) -- conds + more, as a new list
+            local t = {}
+            for _, x in ipairs(conds) do
+                t[#t + 1] = x
+            end
+            for _, x in ipairs({ ... }) do
+                t[#t + 1] = x
+            end
+            return t
+        end
+        local function mset(m)
+            return 'melee mode ' .. m
+        end
+        local worn = {} -- the job file's sets, in order: their children (_HighBuff, _Dt, _Self...) come after
+        local function wear(name, conds, parent, extra)
+            if add(name, conds, parent, extra) then worn[#worn + 1] = { name, conds } end
+        end
+        -- the file's weapon and weapon-type variants (<root>_Chango<suffix>, <root>_2h<suffix>); the copy menu makes
+        -- new ones, so none is listed as missing
+        local function with_weapons(root, suffix, conds, parent, extra)
+            for _, wm in ipairs(weapon_modes()) do
+                if has_set(root .. '_' .. wm .. suffix) then
+                    wear(root .. '_' .. wm .. suffix, plus(conds, 'weapon mode ' .. wm), parent, extra)
+                end
+            end
+            for _, h in ipairs({ '2h', '1h' }) do
+                if has_set(root .. '_' .. h .. suffix) then
+                    wear(root .. '_' .. h .. suffix, plus(conds, HANDS[h] .. ' with no set of its own'), parent, extra)
+                end
+            end
+        end
+        -- base, its weapon variants, its /mset variants, then both (ByName / EquipMode; under: EquipMode's prefix,
+        -- Ws_Default -> Ws_Chango, Ws_Acc)
+        local function with_msets(base, conds, parent, under, extra)
+            wear(base, conds, parent, extra)
+            local root = under or base
+            with_weapons(root, '', conds, base, extra)
+            for _, m in ipairs(o.msets) do
+                wear(root .. '_' .. m, plus(conds, mset(m)), base, extra)
+                with_weapons(root, '_' .. m, plus(conds, mset(m)), base, extra)
+            end
+        end
+        local OPPOSITE =
+            { ['cast on yourself'] = 'cast on someone else', ['cast on someone else'] = 'cast on yourself' }
+        local function children(key, cond, from) -- WearChildren: each worn n: n_<key> (X_Default: X_<key>)
+            for _, w in ipairs(from) do
+                local clash = false
+                for _, c in ipairs(w[2]) do
+                    if OPPOSITE[c] == cond then clash = true end
+                end -- Self_Cure_Others: never
+                if not clash then add(child(w[1], key), plus(w[2], cond), w[1]) end
+            end
+        end
+        -- a Hoxne base (WearHoxne / CheckHoxneWs): itself, its /mset, its buff combos (the file's own and the buffs
+        -- typed)
+        local function hoxne(bases, dtKids)
+            local keep = worn
+            worn = {}
+            for _, b in ipairs(bases) do
+                with_msets(b[1], b[2], nil)
+            end
+            for _, b in ipairs(bases) do
+                local cs, have = {}, {}
+                for _, c in ipairs(combos(o.buffs)) do
+                    cs[#cs + 1] = c
+                    have[string.lower(c)] = true
+                end
+                local pre = string.lower(b[1]) .. '_'
+                for _, s in ipairs(document.model.list) do -- Hoxne_Tp_Impetus, Hoxne_Ws_Impetus&Footwork: any buff name
+                    if string.sub(s.lname, 1, #pre) == pre then
+                        local rest = string.sub(s.name, #pre + 1)
+                        local isMode = msetOn[rest] or (rest == 'Dt') or (rest == 'HighBuff')
+                        for _, m in ipairs(o.msets) do
+                            if string.sub(rest, -(#m + 1)) == ('_' .. m) then isMode = true end
+                        end
+                        if string.match(rest, '_Dt$') then isMode = true end
+                        if not isMode and not have[string.lower(rest)] then
+                            have[string.lower(rest)] = true
+                            cs[#cs + 1] = rest
+                        end
+                    end
+                end
+                for _, c in ipairs(cs) do
+                    with_msets(b[1] .. '_' .. c, plus(b[2], (string.gsub(c, '&', ' + ')) .. ' up'), b[1])
+                end
+            end
+            if dtKids and o.dt then children('Dt', 'DT mode', worn) end
+            worn = keep
+        end
+        local name = set.name
+        if string.match(name, '^Hoxne_') then
+            local base = string.match(name, '^(Hoxne_[^_]+)') or name
+            hoxne({ { base, { 'Hoxne' } } }, (base == 'Hoxne_Ws') or is_ws(string.sub(base, 7)))
+            return out
+        end
+
+        -- the action this set is for (action_for: by its name; else the handler of the job file that names it)
+        local a = action_for(set, {})
+        if (a == nil) and ( (DEFAULT_KEY[name] ~= nil) or ENGINE_DEFAULT[name] or string.match(name,
+            '_Received$') or string.match(name, '^Weapon_') ) then
+            a = { event = 'Default', key = DEFAULT_KEY[name] }
+        end
+        if document.model.scan == nil then -- read once per file
+            local ok, r = pcall(scan_job, document.model.text or '')
+            document.model.scan = ok and r or {}
+        end
+        local scan = document.model.scan
+        if a == nil then
+            -- A custom set can appear in several handlers. Follow source order
+            -- rather than table hash order, which changes between Lua runtimes.
+            local firstLine = math.huge
+            for event, refs in pairs(scan) do
+                for _, reference in ipairs(refs) do
+                    if reference.line < firstLine and string.lower(resolve(reference.arg, {},
+                        reference.vars) or '') == set.lname then
+                        a, firstLine = { event = event }, reference.line
+                    end
+                end
+            end
+        end
+        if a == nil then -- worn by name (an ability or spell the resources don't know?): its /mset variants
+            with_msets(name, {}, nil)
+            return out
+        end
+        local ev = a.event
+        if (ev == 'Default') and (a.key == 'Idle') and not (string.match(name,
+            '^Idle') or (name == 'Resting') or (name == 'Town')) then
+            a.key = nil
+        end
+        local ctx = { status = (ev == 'Default') and a.key or nil, action = a.action, skill = a.skill }
+        if ctx.action ~= nil then
+            ctx.family = family(ctx.action)
+            if (ctx.skill == nil) and ((ev == 'Midcast') or (ev == 'Precast')) then
+                local r = context.resources:GetSpellByName(ctx.action, 0)
+                if r ~= nil then ctx.skill = SKILL[r.Skill] end
+            end
+        end
+        local function st(s) -- a status as a condition, when the view covers more than one
+            if ctx.status == nil then return { STATUS_TEXT[s] } end
+            if ctx.status == s then return {} end
+            return nil
+        end
+
+        -- 1. the job file's handler, line by line
+        local refs = scan[ev]
+        if refs ~= nil then
+            for _, r in ipairs(refs) do
+                local ok, conds = true, {}
+                for _, f in ipairs(r.frames) do
+                    for _, p in ipairs(f.prior) do
+                        if eval_cond(p, ctx, r.vars) == true then ok = false end
+                    end
+                    if f.cond ~= nil then
+                        local v, t = eval_cond(f.cond, ctx, r.vars)
+                        if v == false then ok = false end
+                        for _, x in ipairs(t) do
+                            conds[#conds + 1] = x
+                        end
+                    end
+                end
+                if ok then
+                    local extra = { src = 'job', line = r.line, code = r.code }
+                    if r.kind == 'idle' then
+                        local c = st('Idle')
+                        wear('Idle', conds, nil, extra)
+                        with_weapons('Idle', '', conds, 'Idle', extra)
+                        if c ~= nil then
+                            for _, m in ipairs({ 'Refresh', 'Regen', 'Regain' }) do
+                                local mc = plus(conds, 'idle mode ' .. m, unpack(c))
+                                wear('Idle_' .. m, mc, 'Idle', extra)
+                                with_weapons('Idle', '_' .. m, mc, 'Idle', extra)
+                            end
+                        end
+                    elseif r.kind == 'mode' then
+                        local c = (r.arg == 'Tp') and st('Engaged') or {}
+                        if c ~= nil then with_msets(r.arg .. '_Default', plus(conds, unpack(c)), nil, r.arg, extra) end
+                    elseif r.kind == 'th' then
+                        add('TH', plus(conds, 'TH mode'), nil, extra)
+                    else
+                        local n, pre, rest, miss = resolve(r.arg, ctx, r.vars)
+                        local cyc = (n == nil) and (pre ~= nil) and (pre ~= '') and cycle_of(rest, r.vars) or nil
+                        if n ~= nil then
+                            if r.kind == 'byname' then
+                                with_msets(n, conds, nil, nil, extra)
+                            else
+                                wear(n, conds, nil, extra)
+                            end
+                        elseif cyc ~= nil then -- 'Tank_' .. tank: each set of the file with that start, one per mode
+                            local lp = string.lower(pre)
+                            for _, s in ipairs(document.model.list) do
+                                local val = string.sub(s.name, #pre + 1)
+                                if (string.sub(s.lname, 1, #lp) == lp) and (val ~= '') and not string.find(val,
+                                    '_', 1, true) then
+                                    local c = plus(conds, cycle_text(cyc, val))
+                                    if r.kind == 'byname' then
+                                        with_msets(s.name, c, nil, nil, extra)
+                                    else
+                                        wear(s.name, c, nil, extra)
+                                    end
+                                end
+                            end
+                        elseif not miss and string.find(r.arg, '..', 1, true) then
+                            dyn[#dyn + 1] = 'line ' .. r.line .. ': ' .. r.code
+                        end
+                    end
+                end
+            end
+        end
+
+        -- 2. the engine's layers after the job file (gcinclude: WrapHoldHandlers, CheckDefault)
+        if ev == 'Weaponskill' then
+            -- /proc drops the job's WS gear: only Ws_Proc (else Proc) goes on; no _HighBuff, _Dt, Hoxne or Buffs_Ws
+            local jobWorn = {}
+            for _, w in ipairs(worn) do
+                jobWorn[#jobWorn + 1] = w
+            end
+            worn = {}
+            wear('Ws_Proc', { 'proc mode' }, nil, { proc = true })
+            if not filled('Ws_Proc') then
+                wear('Proc', { 'proc mode', 'no gear in Ws_Proc' }, nil, { proc = true })
+            end -- FindFilled
+            worn = jobWorn
+            if o.high then children('HighBuff', 'WS high-buff mode', jobWorn) end
+            if o.dt then
+                children('Dt', 'DT mode', jobWorn)
+            end -- the proc sets take no _Dt
+            if o.hoxne then
+                local bases = { { 'Hoxne_Ws', { 'Hoxne' } } }
+                if ctx.action ~= nil then bases[2] = { 'Hoxne_' .. ctx.action, { 'Hoxne' } } end
+                hoxne(bases, true)
+            end
+            notes[#notes + 1] =
+                "Buffs_Ws: a set per buff (Buffs_Ws = { ['Aftermath: Lv.3'] = {...} }), edited in the file."
+        elseif ev == 'Midcast' then
+            -- WearChildren over every set the handler wore; left out: TH, idle/weapon swaps (Idle_Staff) and a set that
+            -- already carries the word (Burst, Self_Cure: no Burst_Burst)
+            local function kids(key, cond)
+                local from = {}
+                for _, w in ipairs(worn) do
+                    local l = string.lower(w[1])
+                    if (l ~= 'th') and not string.match(l, '^idle') and not string.match(l,
+                        '^weapon_') and not string.find(l, string.lower(key), 1, true) then
+                        from[#from + 1] = w
+                    end
+                end
+                children(key, cond, from)
+            end
+            kids('Self', 'cast on yourself')
+            kids('Others', 'cast on someone else')
+            local mb = (gearEngine ~= nil) and gearEngine.settings and gearEngine.settings.MBSkills or nil
+            if (ctx.skill == nil) or (in_list(mb, ctx.skill) ~= false) then
+                kids('Burst', 'magic burst')
+            end -- MBSkills only
+            if ((ctx.action == nil) and ((ctx.skill == nil) or (ctx.skill == 'Dark Magic'))) or ((ctx.action ~= nil)
+                and (string.sub(ctx.action, 1, 7) == 'Absorb-')) then
+                local c = (ctx.action == nil) and { 'an Absorb- spell' } or {}
+                add('Absorb', c)
+                if (ctx.action == nil) or (ctx.action == 'Absorb-TP') then
+                    add('Absorb_TP', plus(c, (ctx.action == nil) and 'Absorb-TP' or nil))
+                end
+            end
+            if (ctx.skill == nil) or (ctx.skill == 'Healing Magic') then
+                add('LightBonus', (ctx.skill == nil) and { 'Healing Magic spells' } or {})
+            end
+            add('SIR', { 'SIR mode' })
+            notes[#notes + 1] = 'Buffs_Midcast: a set per buff, edited in the file.'
+        elseif ev == 'Default' then
+            local eng, idle = st('Engaged'), st('Idle')
+            if eng ~= nil then
+                add('Proc', plus(eng, 'proc mode'), nil, { proc = 'engaged' })
+            end -- in place of the rest
+            if o.hoxne then
+                hoxne({ { 'Hoxne_Dt', { 'Hoxne', 'DT mode' } } }, false)
+                if eng ~= nil then hoxne({ { 'Hoxne_Tp', plus(eng, 'Hoxne') } }, false) end
+                if idle ~= nil then hoxne({ { 'Hoxne_Idle', plus(idle, 'Hoxne') } }, false) end
+            end
+            local cfg = (gearEngine ~= nil) and gearEngine.settings or {}
+            add('Idle_Regen', {
+                'HP under RegenGearHPP'
+                    .. (((cfg.RegenGearHPP or 0) > 0) and (' ' .. cfg.RegenGearHPP .. '%') or ' (off)'),
+                'not fighting',
+            })
+            add('Idle_Refresh', {
+                'MP under RefreshGearMPP'
+                    .. (((cfg.RefreshGearMPP or 0) > 0) and (' ' .. cfg.RefreshGearMPP .. '%') or ' (off)'),
+                'not fighting',
+            })
+            add('Dt', { 'HP under DTGearHPP' })
+            if has_set('Pet_Dt') then
+                add('Pet_Dt', { 'pet HP under PetDTGearHPP' })
+            end -- pet jobs' files have one
+            if (idle ~= nil) or (ctx.status == 'Resting') then add('Town', { 'in a town' }) end
+            for _, m in ipairs(weapon_modes()) do
+                local c = { 'weapon mode ' .. m }
+                add('Weapon_' .. m, c)
+                add('Weapon_' .. m .. '_1h', plus(c, 'no Dual Wield'), 'Weapon_' .. m)
+                for _, ms in ipairs(o.msets) do
+                    add('Weapon_' .. m .. '_' .. ms, plus(c, mset(ms)), 'Weapon_' .. m)
+                end
+            end
+            add('mdt', { 'MDT mode' })
+            add('Aminon', { 'Aminon mode' }) -- empty: mdt (FindFilled)
+            add('TH', { 'TH mode' })
+            local rs, order = {}, {}
+            for prefix, sn in pairs(cfg.ReceivedSets or {}) do
+                if rs[sn] == nil then
+                    rs[sn] = {}
+                    order[#order + 1] = sn
+                end
+                table.insert(rs[sn], prefix)
+            end
+            table.sort(order)
+            for _, sn in ipairs(order) do
+                -- the spells the set is named after first, in the name's order (Protect_Shell: Protect / Shell), then
+                -- the
+                -- shortest (Cure / Cura / Curaga); capitalised as the game writes them
+                local ln = string.lower(sn)
+                local function at(x)
+                    return string.find(ln, x, 1, true) or 1000
+                end
+                table.sort(rs[sn], function(x, y)
+                    if at(x) ~= at(y) then return at(x) < at(y) end
+                    if #x ~= #y then return #x < #y end
+                    return x < y
+                end)
+                local names = {}
+                for i, x in ipairs(rs[sn]) do
+                    names[i] = (string.gsub(x, '(%a)(%a*)', function(f, r) return string.upper(f) .. r end))
+                end
+                add(sn, { table.concat(names, ' / ') .. ' on its way to you' })
+            end
+            if idle ~= nil then add('XIRoll', plus(idle, 'a roll at 11')) end
+            add('Incapacitated', { 'slept, petrified, stunned or terrorized' })
+            add('Sleeping', { 'asleep' })
+            add('Doomed', { 'Doom or Bane' })
+            notes[#notes + 1] = "Buffs: a set per buff (Buffs = { ['Aftermath: Lv.3'] = {...} }), edited in the file."
+        end
+
+        -- 3. the file's own variants of a set listed (Ws_Default_SA): nothing above looks for them
+        local listed = {}
+        for _, w in ipairs(out) do
+            listed[#listed + 1] = w
+        end
+        for _, w in ipairs(listed) do
+            local pre = string.lower(w.name) .. '_'
+            for _, s in ipairs(document.model.list) do
+                if (string.sub(s.lname, 1,
+                    #pre) == pre) and not seen[s.lname] and ((ev == 'Precast') or not string.match(s.lname,
+                    '_precast$')) then
+                    add(s.name, plus(w.conds, "your job file's own logic"), w.name, { src = 'file' })
+                end
+            end
+        end
+        if #dyn > 0 then
+            notes[#notes + 1] =
+                'Your job file also builds set names in code, not listed above (their sets show as "your job file\'s own logic"):'
+            for _, d in ipairs(dyn) do
+                notes[#notes + 1] = '  ' .. d
+            end
+        end
+        return out, (#notes > 0) and table.concat(notes, '\n') or nil
+    end
+
+    -- Probably unused: no built-in trigger by its name, none of the engine's own names, no other set of the file it
+    -- is a variant of (Tp_Default_X, Cure_Self), not a spell family (Utsusemi), not in settings.ReceivedSets, and
+    -- the job file's code never names it or a start of it ('Tank_' .. tank). Cautious: one it can't rule out is used.
+    local ENGINE_NAMES = {
+        absorb = true, absorbtp = true, absorb_tp = true, aminon = true, blumagical = true, bluphysical = true,
+        buffs = true, doomed = true, dt = true, idle = true, incapacitated = true, lightbonus = true, mdt = true,
+        midcast = true, midshot = true, movement = true, pet_dt = true, precast = true, preshot = true, proc = true,
+        resting = true, sir = true, sleeping = true, th = true, town = true, ws_proc = true, xiroll = true,
+    }
+    local ENGINE_PATTERNS = { '^weapon_', '_received$', '^hoxne', '^buffs', '^pet_', '^tp_', '^ws_', '^idle_', '^dt_',
+        '_precast$' }
+    local codeNames = nil -- { text, names = { [lower] = true }, starts = { lower prefixes ending in _ } }
+    local families = nil
+    local function named_in_code(l)
+        local text = document.model.text or ''
+        if (codeNames == nil) or (codeNames.text ~= text) then
+            codeNames = { text = text, names = {}, starts = {} }
+            local open, close = document.model.open or 0, document.model.close or 0
+            local code = string.sub(text, 1, open) .. string.sub(text, close + 1) -- the sets table left out
+            for _, pattern in ipairs({ "'([^'\n]*)'", '"([^"\n]*)"', '[sS]ets%s*%.%s*([%a_][%w_]*)' }) do
+                for s in string.gmatch(code, pattern) do
+                    local ls = string.lower(s)
+                    codeNames.names[ls] = true
+                    if string.match(ls, '_$') then codeNames.starts[#codeNames.starts + 1] = ls end
+                end
+            end
+        end
+        if codeNames.names[l] then return true end
+        for _, p in ipairs(codeNames.starts) do
+            if string.sub(l, 1, #p) == p then return true end
+        end
+        return false
+    end
+    local function spell_family(l)
+        if families == nil then
+            families = {}
+            for id = 1, 1024 do
+                local r = context.resources:GetSpellById(id)
+                local n = (r ~= nil) and (r.Name ~= nil) and r.Name[1] or nil
+                if (type(n) == 'string') and (n ~= '') then families[string.lower(family(n))] = true end
+            end
+        end
+        return families[l] == true
+    end
+    local function unused(set)
+        local n, l = set.name, string.lower(set.name)
+        if (set.code ~= nil) or set.extra or set.new then return false end
+        if ENGINE_NAMES[l] or (DEFAULT_KEY[n] ~= nil) or ENGINE_DEFAULT[n] then return false end
+        for _, p in ipairs(ENGINE_PATTERNS) do
+            if string.match(l, p) then return false end
+        end
+        local base = n
+        while true do
+            base = string.match(base, '^(.+)_[^_]+$')
+            if base == nil then break end
+            if has_set(base) or has_set(base .. '_Default') then return false end
+        end
+        local cfg = (gearEngine ~= nil) and gearEngine.settings or {}
+        for _, sn in pairs((type(cfg.ReceivedSets) == 'table') and cfg.ReceivedSets or {}) do
+            if (type(sn) == 'string') and (string.lower(sn) == l) then return false end
+        end
+        if action_for(set, {}) ~= nil then return false end
+        if named_in_code(l) or spell_family(l) then return false end
+        return true
+    end
+
+    return {
+        Layers = layers_of,
+        IsSetLabel = is_set_label,
+        Labels = labels_of,
+        RecordsFor = records_for,
+        ActionLabel = action_label,
+        SourceLabel = source_label,
+        Explain = why,
+        View = layer_view,
+        Family = family,
+        ModesNow = modes_now,
+        ActionFor = action_for,
+        VariantName = variant_name,
+        Unused = unused,
+        WeaponModes = weapon_modes,
+        When = when_description,
+        Expected = expected_for,
+        Equipment = equipment_for,
+        Related = what_if,
+    }
+end
+
+return actionModel
