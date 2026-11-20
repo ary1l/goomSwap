@@ -47,12 +47,19 @@ end
 -- modes new Weapon_ sets add.
 local function wm_order()
     local doc = editorState.document
-    if doc.wmOrder ~= nil then return doc.wmOrder end
+    local function gone(m) -- its Weapon_ set is staged for deletion: Save takes it out of the cycle
+        local s = doc.model.byLower[string.lower('Weapon_' .. m)]
+        return (s ~= nil) and (s.parentName == nil) and ((doc.deleted or {})[s.name] ~= nil)
+    end
     local out, seen = {}, {}
     local function add(m)
-        if (m ~= nil) and (string.lower(m) ~= 'none') and not seen[string.lower(m)] then
+        if (m ~= nil) and (string.lower(m) ~= 'none') and not seen[string.lower(m)] and not gone(m) then
             seen[string.lower(m)], out[#out + 1] = true, m
         end
+    end
+    if doc.wmOrder ~= nil then
+        for _, m in ipairs(doc.wmOrder) do add(m) end
+        return out
     end
     for _, m in ipairs(setFile.WeaponModes(doc.model.text or '') or {}) do add(m) end
     for _, s in ipairs(doc.newSets) do add(string.match(s.name, '^Weapon_([^_]+)$')) end

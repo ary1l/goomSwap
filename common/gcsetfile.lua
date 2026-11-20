@@ -971,6 +971,91 @@ local function rename_all(s, model, renames, out)
     return true
 end
 
+-- == A deleted Weapon_ set's /wm mode: out of gcinclude.WeaponModes; DefaultWeapons / WeaponRoles naming it. ==
+
+-- Where each assignment of gcinclude.<list> starts its value (code only: a commented-out line is not one).
+local function list_values(code, list)
+    local out = {}
+    for vAt in string.gmatch(code, '%f[%w_]gcinclude%.' .. list .. '%s*=%s*()') do out[#out + 1] = vAt end
+    return out
+end
+-- The '{' of a value written as a table ({...} or T{...}), else nil.
+local function table_open(s, vAt)
+    if string.sub(s, vAt, vAt) == '{' then return vAt end
+    return string.match(s, '^T%s*(){', vAt)
+end
+
+-- Every quoted string in the mode lists (WeaponModes, DefaultWeapons, WeaponRoles) that names one of modes, any
+-- case: { { list = 'DefaultWeapons', text = as written }, ... }.
+local function mode_mentions(s, modes)
+    local want, out, code = {}, {}, code_only(s)
+    for _, m in ipairs(modes) do want[string.lower(m)] = true end
+    for _, list in ipairs(MODE_LISTS) do
+        for _, vAt in ipairs(list_values(code, list)) do
+            local open, last = table_open(s, vAt), nil
+            if open ~= nil then
+                last = select(2, scan_table(s, open))
+            elseif (string.sub(s, vAt, vAt) == "'") or (string.sub(s, vAt, vAt) == '"') then
+                open, last = vAt, vAt
+            end
+            local i = open
+            while (last ~= nil) and (i <= last) do
+                local at = string.find(code, "['\"]", i)
+                if (at == nil) or (at > last) then break end
+                local text, after = read_string(s, at)
+                if want[string.lower(text)] then out[#out + 1] = { list = list, text = text } end
+                i = after
+            end
+        end
+    end
+    return out
+end
+
+-- gcinclude.WeaponModes without modes (any case; None stays): each entry goes with the comma after it (the last
+-- one: with the comma before it), and its line too when nothing but spaces or a comment is left on it. The text;
+-- unchanged when no list names them.
+local function weapon_modes_without(s, modes)
+    local want = {}
+    for _, m in ipairs(modes) do
+        if string.lower(m) ~= 'none' then want[string.lower(m)] = true end
+    end
+    while true do -- one entry at a time, the text read again each time: no two cuts can meet
+        local code, cut = code_only(s), nil
+        for _, vAt in ipairs(list_values(code, 'WeaponModes')) do
+            local open = table_open(s, vAt)
+            local entries = (open ~= nil) and scan_table(s, open) or {}
+            for k, e in ipairs(entries) do
+                local c = string.sub(s, e.vstart, e.vstart)
+                if (cut == nil) and (e.key == nil) and ((c == "'") or (c == '"')) then
+                    local text, after = read_string(s, e.vstart)
+                    if (after == e.vend) and want[string.lower(text)] then
+                        if e.sep ~= nil then
+                            local j = e.sep + 1
+                            while string.match(string.sub(s, j, j), '^[ \t]$') do j = j + 1 end
+                            cut = { e.start, j }
+                        elseif k > 1 then
+                            cut = { entries[k - 1].sep or entries[k - 1].vend, e.vend }
+                        else
+                            cut = { e.start, e.vend }
+                        end
+                    end
+                end
+            end
+            if cut ~= nil then break end
+        end
+        if cut == nil then return s end
+        if not string.find(string.sub(s, cut[1], cut[2] - 1), '\n', 1, true) then
+            local ls, le = line_start(s, cut[1]), line_end(s, cut[1])
+            local nl = (string.sub(s, le - 1, le - 1) == '\n') and 1 or 0
+            if string.match(string.sub(code, ls, cut[1] - 1), '^%s*$')
+                and string.match(string.sub(code, cut[2], le - 1 - nl), '^%s*$') then
+                cut = { ls, le }
+            end
+        end
+        s = string.sub(s, 1, cut[1] - 1) .. string.sub(s, cut[2])
+    end
+end
+
 -- char.lua (`return { settings = { ... } }`): the settings table's `key = ...` replaced, or added as its first entry
 -- (a settings table is added when there is none). valueFor(indent) gives the value's Lua text for a key line with
 -- that indent, or nil to take the key out. Comments and every other line stay. nil, why when the file has no
@@ -1218,6 +1303,8 @@ return {
     SetJobSetting = set_job_setting,
     QuoteText = quote_text,
     OrderWeaponModes = weapon_modes_ordered,
+    ModeMentions = mode_mentions,
+    RemoveWeaponModes = weapon_modes_without,
     AddNewSets = new_set_splices,
     AddRenames = rename_all,
     RenameCount = function(s, model, old, new) return rename_splices(s, model, old, new, {}) end,
