@@ -29,8 +29,8 @@ The set list is grouped under headings (Idle, Defense, Melee, Weapons...). Arran
 - **Right-click a heading:** Move up / Move down, **New heading below** (type its name first), and for a heading
   of your own **Rename** and **Remove this heading** (its sets go back where their names put them).
   **Built-in order** undoes all of it.
-- **Right-click a set:** **Move to heading** puts that set under any heading; **Back to where its name puts it**
-  undoes the move. **Move up / Move down** reorders it inside its heading.
+- **Right-click a set:** **Move to heading** (a submenu) puts that set under any heading; **Back to where its name
+  puts it**, at the end of that submenu, undoes the move. **Move up / Move down** reorders it inside its heading.
 - **Drag a set** onto a heading to move it there, or onto another set to put it just before that one.
 - **Buff sets** (`Buffs['Haste']`) sit under their parent in file order. Drag one or use **Move to heading** to put
   it elsewhere (shown by its full name there); **Back under Buffs** returns it.

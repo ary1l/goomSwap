@@ -7,34 +7,40 @@ return function(
     owned_for, palette, picker, pill, profiler, red_button, request_context, saveReview, save_preferences, setFile,
     set_action_entries, set_tip, tag, text_w, undo_slot, where, wi_from_game, wrap, xy
 )
+-- A submenu (opens on hover) where the imgui binding has one; else its rows inline under a dim title.
+local function submenu(label, title, draw)
+    if imgui.BeginMenu == nil then
+        imgui.TextColored(palette.dim, title)
+        draw()
+    elseif imgui.BeginMenu(label) then
+        draw()
+        imgui.EndMenu()
+    end
+end
+
 -- Copy as a weapon set: this set's slots as a new <name>_<weapon> (Tp_Default -> Tp_Chango, Tp_Acc ->
 -- Tp_Chango_Acc), or by weapon type (_2h, _1h); then change what differs. Not written until Save.
 local function draw_weapon_copies(set)
     if (set.code ~= nil) or set.extra or (set.parentName ~= nil) or editorState.document.deleted[set.name] then return end
     local targets = ctx.actions.WeaponModes()
     targets[#targets + 1], targets[#targets + 2] = '2h', '1h'
-    local shown = 0
+    local rows = {}
     for _, w in ipairs(targets) do
         local name = ctx.actions.VariantName(set, w)
-        if (name ~= nil) and not has_set(name) then
-            if shown == 0 then
-                imgui.Separator()
-                imgui.TextColored(palette.dim, 'Copy as a weapon set:')
-            end
-            if (shown % 3) ~= 0 then imgui.SameLine() end
-            shown = shown + 1
-            if imgui.SmallButton(name .. '##copyas') then
-                make_set(name, set)
-                imgui.CloseCurrentPopup()
-            end
+        if (name ~= nil) and not has_set(name) then rows[#rows + 1] = { w = w, name = name } end
+    end
+    if #rows == 0 then return end
+    submenu('Copy as a weapon set##copyas', 'Copy as a weapon set:', function()
+        for _, r in ipairs(rows) do
+            if ctx.menu_item(r.name .. '##copyas') then make_set(r.name, set) end
             if imgui.IsItemHovered() then
-                set_tip(((w == '2h') or (w == '1h'))
-                    and ('Worn over ' .. set.name .. ' with a ' .. ((w == '2h') and 'two' or 'one')
+                set_tip(((r.w == '2h') or (r.w == '1h'))
+                    and ('Worn over ' .. set.name .. ' with a ' .. ((r.w == '2h') and 'two' or 'one')
                         .. '-handed weapon that has no set of its own here.')
-                    or ('Worn over ' .. set.name .. ' while /wm ' .. w .. ' is on.'))
+                    or ('Worn over ' .. set.name .. ' while /wm ' .. r.w .. ' is on.'))
             end
         end
-    end
+    end)
 end
 
 -- /wm order as Save writes it: your staged one, else the file's (None is left out: it keeps its place), then the
@@ -62,24 +68,24 @@ local function draw_wm_order(set)
         if string.lower(m) == string.lower(mode) then at = i end
     end
     if at == nil then return end
-    imgui.Separator()
-    imgui.TextColored(palette.dim, '/wm order: ' .. table.concat(order, ', '))
-    for _, mv in ipairs({ { 'Earlier in /wm', -1 }, { 'Later in /wm', 1 } }) do
-        if mv[2] > 0 then imgui.SameLine() end
-        local to = at + mv[2]
-        if imgui.SmallButton(mv[1] .. '##wmorder') and (to >= 1) and (to <= #order) then
-            local new = {}
-            for i, m in ipairs(order) do new[i] = m end
-            new[at], new[to] = new[to], new[at]
-            editorState.document.wmOrder = nil
-            local same = (#wm_order() == #new)
-            for i, m in ipairs(wm_order()) do
-                if m ~= new[i] then same = false end
+    submenu('/wm order##wmorder', '/wm order:', function()
+        imgui.TextColored(palette.dim, table.concat(order, ', '))
+        for _, mv in ipairs({ { 'Earlier in /wm', -1 }, { 'Later in /wm', 1 } }) do
+            local to = at + mv[2]
+            if ctx.menu_item(mv[1] .. '##wmorder', (to >= 1) and (to <= #order), true) then
+                local new = {}
+                for i, m in ipairs(order) do new[i] = m end
+                new[at], new[to] = new[to], new[at]
+                editorState.document.wmOrder = nil
+                local same = (#wm_order() == #new)
+                for i, m in ipairs(wm_order()) do
+                    if m ~= new[i] then same = false end
+                end
+                editorState.document.wmOrder = (not same) and new or nil -- back to the file's: nothing to save
+                feedback('/wm order: ' .. table.concat(new, ', ') .. (same and '' or ' (written on Save)') .. '.')
             end
-            editorState.document.wmOrder = (not same) and new or nil -- back to the file's: nothing to save
-            feedback('/wm order: ' .. table.concat(new, ', ') .. (same and '' or ' (written on Save)') .. '.')
         end
-    end
+    end)
 end
 
 -- Every set GoomSwap could put on for this set's action, grouped by what has to be on for it, have or missing.
@@ -994,12 +1000,8 @@ local function draw_fill()
     imgui.EndChild()
 end
 
-local function menu_button(label, enabled)
-    local disabled = not enabled and imgui.BeginDisabled ~= nil
-    if disabled then imgui.BeginDisabled() end
-    local clicked = imgui.Button(label)
-    if disabled then imgui.EndDisabled() end
-    return clicked and enabled
+local function menu_button(label, enabled, color)
+    return ctx.menu_item(label, enabled and true or false, false, color)
 end
 
 local function draw_context_menu()
@@ -1014,26 +1016,28 @@ local function draw_context_menu()
         imgui.TextUnformatted(set.name .. (context.slot and (' / ' .. context.slot) or ''))
         imgui.Separator()
         if context.kind == 'set' then
-            if imgui.Button('Open set##context') then
-                editorPreferences.Select(editorState, set.name)
-                imgui.CloseCurrentPopup()
+            local item = ctx.menu_item
+            -- Open / Compare: only for a set other than the open one
+            local selected = editorState.document.model.byName[editorState.selection.setName]
+            if selected ~= set then
+                if item('Open set##context') then editorPreferences.Select(editorState, set.name) end
+                if item('Compare with current set##context', (selected ~= nil) and not selected.code
+                    and not set.code and not selected.extra and not set.extra) then
+                    editorState.ui.cmp = { set = selected.name, with = set.name }
+                    editorState.selection.tab = 'compare'
+                end
             end
-            if imgui.Button((editorState.preferences.favorites[set.name] and 'Unfavorite' or 'Favorite')
-                .. '##context') then
+            if item((editorState.preferences.favorites[set.name] and 'Unfavorite' or 'Favorite') .. '##context') then
                 editorPreferences.ToggleFavorite(editorState.preferences, set.name)
                 save_preferences()
                 feedback('Updated favorite: ' .. set.name .. '.')
-                imgui.CloseCurrentPopup()
-            end
-            local selected = editorState.document.model.byName[editorState.selection.setName]
-            if menu_button('Compare with current set##context', selected and selected ~= set
-                and not selected.code and not set.code and not selected.extra and not set.extra) then
-                editorState.ui.cmp = { set = selected.name, with = set.name }
-                editorState.selection.tab = 'compare'
-                imgui.CloseCurrentPopup()
             end
             imgui.Separator()
-            set_action_entries(set)
+            set_action_entries(set, 'edit')
+            if item('Copy to other jobs...##copyjobs') then editorState.ui.copyJobs = { set = set.name, open = true } end
+            if imgui.IsItemHovered() then
+                set_tip('Its pieces into other job files. Pieces a job can\'t wear are left out; you pick the files.')
+            end
             -- Move up / down under its heading (the heading takes your own order), or to another heading: this
             -- set by its exact name (char.lua's settings, or the shared headings file)
             -- a set inside a set (Buffs['Haste']) sits under its parent in file order, or where it was moved
@@ -1043,8 +1047,7 @@ local function draw_context_menu()
             imgui.Separator()
             if not nested then
                 for _, mv in ipairs({ { 'Move up', -1 }, { 'Move down', 1 } }) do
-                    if mv[2] > 0 then imgui.SameLine() end
-                    if imgui.SmallButton(mv[1] .. ' in ' .. set.group .. '##ownorder') then
+                    if item(mv[1] .. ' in ' .. set.group .. '##ownorder', true, true) then
                         local list = H.lib.MoveInOrder(H.rows(set.group), set.name, mv[2])
                         if list == nil then
                             H.savePrefs(nil, (mv[2] < 0) and 'already at the top' or 'already at the bottom')
@@ -1057,38 +1060,28 @@ local function draw_context_menu()
                     end
                 end
             end
-            imgui.TextColored(palette.dim, 'Move to heading ('
-                .. ((H.source() == 'shared') and 'every character' or 'every job on this character') .. '):')
-            local n = 0
-            for _, h in ipairs(H.order()) do
-                if h ~= set.group then
-                    if (n % 3) ~= 0 then imgui.SameLine() end
-                    n = n + 1
-                    if imgui.SmallButton(h .. '##moveto') then
+            local scope = (H.source() == 'shared') and 'every character' or 'every job on this character'
+            submenu('Move to heading##moveto', 'Move to heading (' .. scope .. '):', function()
+                if imgui.BeginMenu ~= nil then imgui.TextColored(palette.dim, 'For ' .. scope .. ':') end
+                for _, h in ipairs(H.order()) do
+                    if (h ~= set.group) and item(h .. '##moveto') then
                         local to = h
                         if (parent ~= nil) and (parent.group == h) then to = nil end -- its parent's: back under it
                         H.save(H.lib.Place(H.setting(), H.builtins, set.name, to))
-                        imgui.CloseCurrentPopup()
                     end
                 end
-            end
-            if (set.builtin ~= nil) and (H.lib.PlacedBy(H.setting(), set.name) ~= nil) then
-                if imgui.SmallButton(((parent ~= nil) and ('Back under ' .. parent.name)
-                    or 'Back to where its name puts it') .. '##moveto') then
-                    H.save(H.lib.Place(H.setting(), H.builtins, set.name, nil))
-                    imgui.CloseCurrentPopup()
+                if (set.builtin ~= nil) and (H.lib.PlacedBy(H.setting(), set.name) ~= nil) then
+                    imgui.Separator()
+                    if item(((parent ~= nil) and ('Back under ' .. parent.name)
+                        or 'Back to where its name puts it') .. '##moveto') then
+                        H.save(H.lib.Place(H.setting(), H.builtins, set.name, nil))
+                    end
                 end
-            end
+            end)
             draw_weapon_copies(set)
             draw_wm_order(set)
             imgui.Separator()
-            if imgui.SmallButton('Copy to other jobs...##copyjobs') then
-                editorState.ui.copyJobs = { set = set.name, open = true }
-                imgui.CloseCurrentPopup()
-            end
-            if imgui.IsItemHovered() then
-                set_tip('Its pieces into other job files. Pieces a job can\'t wear are left out; you pick the files.')
-            end
+            set_action_entries(set, 'drop')
         else
             local slot, gear = context.slot, context.gear
             local value, owned, source = inspection_target(set, slot, gear, context.source)
@@ -1139,7 +1132,8 @@ local function draw_context_menu()
                 undo_slot(set, slot)
                 imgui.CloseCurrentPopup()
             end
-            if menu_button('Clear slot##context', editable and (current(set, slot) or ghost_of(set, slot))) then
+            if menu_button('Clear slot##context', editable and (current(set, slot) or ghost_of(set, slot)),
+                palette.bad) then
                 edit(set, slot, nil)
                 feedback('Cleared ' .. set.name .. ' / ' .. slot .. ' (unsaved).')
                 imgui.CloseCurrentPopup()

@@ -116,6 +116,18 @@ local palette = {
     title = { 0.122, 0.149, 0.204, 1.0 },
     shiny = { 0.867, 0.784, 0.478, 1.0 },
 }
+-- A menu row: full width, lit on hover. A click closes the menu, unless keepOpen (Move up / down, clicked again and
+-- again). enabled false: greyed, never clicks. color: its text (palette.bad for what drops something).
+ctx.menu_item = function(label, enabled, keepOpen, color)
+    local off = (enabled ~= nil) and not enabled
+    local disabled = off and (imgui.BeginDisabled ~= nil)
+    if disabled then imgui.BeginDisabled() end
+    if color then imgui.PushStyleColor(ImGuiCol_Text, color) end
+    local clicked = imgui.Selectable(label, false, keepOpen and (ImGuiSelectableFlags_NoAutoClosePopups or 0) or 0)
+    if color then imgui.PopStyleColor() end
+    if disabled then imgui.EndDisabled() end
+    return clicked and not off
+end
 -- A colour preset (gctheme, shared with goomui) recolours the state accents by meaning; base, text and button greys
 -- stay. Own values are kept to restore.
 local THEMED = { sel = 'mp', ok = 'hp_full', warn = 'hp_25', bad = 'hp_0', rp = 'tp_rdy', aug = 'tp_rdy',
@@ -1493,6 +1505,7 @@ end
 local OPENERS = {
     BeginChild = 'EndChild',
     BeginPopup = 'EndPopup',
+    BeginMenu = 'EndMenu',
     BeginTable = 'EndTable',
     BeginDisabled = 'EndDisabled',
     BeginGroup = 'EndGroup',
