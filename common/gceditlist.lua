@@ -49,6 +49,10 @@ local function draw_new_popup()
     if imgui.Button('Create##gcedit_new') and (name ~= '') and not clash and not string.find(name, '[\r\n]') then
         make_set(name, editorState.ui.newCopy[1] and from or nil)
         editorState.ui.newName[1], editorState.ui.sugg = '', nil
+        -- a new /wm mode: offer its weapon sets and layers (reopened from its header's Weapon sets...)
+        local made = editorState.document.model.byName[name]
+        local wmode = (ctx.weapon_set_mode ~= nil) and ctx.weapon_set_mode(made) or nil
+        if wmode ~= nil then editorState.ui.requestWeaponSets = wmode end
         imgui.CloseCurrentPopup()
     end
     imgui.SameLine()

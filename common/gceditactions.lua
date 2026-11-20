@@ -9,6 +9,7 @@ function actionModel.New(context)
     local SCREEN, SLOT_BIT, NUM_SLOT = context.slots, context.slotBits, context.slotNames
     local current, has_set, filled, is_ws = context.current, context.hasSet, context.filled, context.isWeaponskill
     local item_id, read_file, gearEngine = context.itemId, context.readFile, context.engine
+    local setFile = context.setFile
     local jobLines, jobLinesModel
     local parsed = context.analysis
     local scan_job, eval_cond, resolve = parsed.Scan, parsed.Evaluate, parsed.Resolve
@@ -508,7 +509,18 @@ function actionModel.New(context)
             and (context.job == p:GetMainJob()) then
             for _, m in ipairs(gearEngine.WeaponModes) do add(m) end
         end
-        for _, s in ipairs(document.model.list) do add(string.match(s.name, '^Weapon_([^_]+)$')) end
+        -- the file's Weapon_<mode> sets; not one that is another's own (Weapon_MpuAcc: Mpu with /mset Acc)
+        local cands, msets = {}, setFile.MeleeModes(document.model.text, document.newModes)
+        for _, s in ipairs(document.model.list) do cands[#cands + 1] = string.match(s.name, '^Weapon_([^_]+)$') end
+        for _, m in ipairs(cands) do
+            local own = false
+            for _, list in ipairs({ cands, out }) do
+                for _, base in ipairs(list) do
+                    if (base ~= m) and setFile.WeaponVariantOf('Weapon_' .. m, base, msets) then own = true end
+                end
+            end
+            if not own then add(m) end
+        end
         return out
     end
     -- name split at its first _ whose left part is an action (Savage Blade_Naegling_Acc: Savage Blade,

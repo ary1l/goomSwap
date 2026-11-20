@@ -597,7 +597,8 @@ end
 local function registration_plan()
     local cached = editorState.cache.weaponPlan
     if not cached or cached.revision ~= editorState.document.revision then
-        local ok, modes = setFile.AddWeaponModes(editorState.document.model.text, editorState.document.newSets, {})
+        local ok, modes = setFile.AddWeaponModes(editorState.document.model.text, editorState.document.newSets, {},
+            editorState.document.newModes)
         cached = { revision = editorState.document.revision, ok = ok, modes = modes or {} }
         editorState.cache.weaponPlan = cached
     end
@@ -612,10 +613,12 @@ local function pending_weapon_mode(set)
     end
 end
 
+-- Deleting a /wm mode (wm.*: one local for them all, the main chunk is at Lua's 200-local limit).
+local wm = {}
 -- A Weapon_ set deleted: Save takes its /wm mode out of gcinclude.WeaponModes. For modes: remove, the list's
 -- entries naming them (as written); flags, { list, text } where DefaultWeapons / WeaponRoles still name one (as
 -- staged in Settings, else as the file has them): those are left for you.
-local function mode_report(modes)
+function wm.report(modes)
     local doc, out, want = editorState.document, { modes = modes, remove = {}, flags = {} }, {}
     if #modes == 0 then return out end
     for _, m in ipairs(modes) do want[string.lower(m)] = true end
@@ -641,16 +644,22 @@ local function mode_report(modes)
     return out
 end
 -- The sets worn only with weapon mode `mode` (Tp_<mode>, Ws_<mode>_Acc, Savage Blade_<mode>, Idle_<mode>,
--- Weapon_<mode>_1h...), not already deleted: free, nothing else looks for them once the mode is gone; coded, your
+-- Weapon_<mode>_1h, Weapon_<mode>Acc...), not already deleted: free, nothing else looks for them once the mode is gone; coded, your
 -- job file names them (sets.X, ByName...), so they are kept.
-local function mode_sets(mode)
+function wm.sets(mode)
     local doc, lm, free, coded = editorState.document, string.lower(mode), {}, {}
-    local variant = 'weapon_' .. lm .. '_'
+    local msets, listed = setFile.MeleeModes(doc.model.text, doc.newModes), {}
+    for _, m in ipairs(setFile.WeaponModes(doc.model.text or '') or {}) do listed[string.lower(m)] = true end
     for _, s in ipairs(doc.model.list or {}) do
         if (s.parentName == nil) and not doc.deleted[s.name] and (s.lname ~= 'weapon_' .. lm) then
-            local w = (string.sub(s.lname, 1, #variant) == variant) and mode
-                or ((ctx.actions ~= nil) and ctx.actions.WeaponModeOf(s)) or nil
-            if (w ~= nil) and (string.lower(w) == lm) then
+            local rest, own = string.match(s.lname, '^weapon_(.+)$'), false
+            if rest ~= nil then -- a weapon set: this mode's own (Weapon_Mpu_1h, Weapon_MpuAcc), not a listed mode
+                own = (not listed[rest]) and setFile.WeaponVariantOf(s.name, mode, msets)
+            else
+                local w = (ctx.actions ~= nil) and ctx.actions.WeaponModeOf(s) or nil
+                own = (w ~= nil) and (string.lower(w) == lm)
+            end
+            if own then
                 local refs = (not s.new) and setFile.RenameCount(doc.model.text, doc.model, s.name, s.name) or 0
                 if (refs or 0) > 0 then coded[#coded + 1] = s else free[#free + 1] = s end
             end
@@ -658,14 +667,14 @@ local function mode_sets(mode)
     end
     return free, coded
 end
-local function names_of(sets)
+function wm.names(sets)
     local out = {}
     for _, s in ipairs(sets) do out[#out + 1] = s.name end
     return table.concat(out, ', ')
 end
 
 -- The modes of every Weapon_ set staged for deletion (a set inside a set is not a mode).
-local function wm_removal()
+function wm.removal()
     local doc, cached = editorState.document, editorState.cache.wmRemoval
     if (cached == nil) or (cached.doc ~= doc) or (cached.revision ~= doc.revision) then
         local modes = {}
@@ -675,10 +684,10 @@ local function wm_removal()
             if mode ~= nil then modes[#modes + 1] = mode end
         end
         table.sort(modes)
-        cached = mode_report(modes)
+        cached = wm.report(modes)
         cached.doc, cached.revision, cached.left = doc, doc.revision, {}
         for _, m in ipairs(cached.remove) do -- what stays of each mode: deleting is up to you (the delete box)
-            local free, coded = mode_sets(m)
+            local free, coded = wm.sets(m)
             for _, s in ipairs(coded) do free[#free + 1] = s end
             if #free > 0 then cached.left[#cached.left + 1] = { mode = m, sets = free } end
         end
@@ -686,10 +695,10 @@ local function wm_removal()
     end
     return cached
 end
-ctx.wm_removal = wm_removal
+ctx.wm_removal = wm.removal
 
 -- Lines for what a Weapon_ deletion does to the /wm cycle (the delete box, the Save review).
-local function draw_mode_report(r)
+function wm.draw(r)
     for _, m in ipairs(r.remove) do
         imgui.TextColored(palette.blue, '/wm ' .. m .. ' comes out of the weapon cycle (gcinclude.WeaponModes).')
     end
@@ -747,7 +756,7 @@ local function bind_actions()
             local ability = resources:GetAbilityByName(name, 0)
             return ability ~= nil and ability.Id < 0x200
         end,
-        itemId = item_id,
+        itemId = item_id, setFile = setFile,
         readFile = read_file, resources = resources, display = live and gcdisplay or nil, getRecords = function()
             return live and GcRecords or nil
         end, getPlayer = function()
@@ -897,21 +906,21 @@ local function draw_delete_confirmation()
         imgui.TextUnformatted('References elsewhere remain. The definition is removed on Save, with a backup.')
         local mode = (set.parentName == nil) and string.match(set.name, '^Weapon_(.+)$') or nil
         if (mode ~= nil) and (editorState.ui.deleteReport == nil) then -- read once while the box is open
-            local r = mode_report({ mode })
+            local r = wm.report({ mode })
             r.free, r.coded = {}, {}
-            if #r.remove > 0 then r.free, r.coded = mode_sets(mode) end -- a /wm mode: its own sets go with it
+            if #r.remove > 0 then r.free, r.coded = wm.sets(mode) end -- a /wm mode: its own sets go with it
             editorState.ui.deleteReport, editorState.ui.deleteSets = r, { true }
         end
         local r = (mode ~= nil) and editorState.ui.deleteReport or nil
         if r ~= nil then
-            draw_mode_report(r)
+            wm.draw(r)
             if #r.free > 0 then
                 imgui.Checkbox('Also delete the ' .. #r.free .. ' set' .. ((#r.free == 1) and '' or 's')
                     .. ' worn only with /wm ' .. mode .. ':##gcedit_delsets', editorState.ui.deleteSets)
-                imgui.TextColored(editorState.ui.deleteSets[1] and palette.bad or palette.warn, names_of(r.free))
+                imgui.TextColored(editorState.ui.deleteSets[1] and palette.bad or palette.warn, wm.names(r.free))
             end
             if #r.coded > 0 then
-                imgui.TextColored(palette.warn, 'Kept, your job file names them: ' .. names_of(r.coded) .. '.')
+                imgui.TextColored(palette.warn, 'Kept, your job file names them: ' .. wm.names(r.coded) .. '.')
             end
         end
         imgui.PopTextWrapPos()
@@ -970,13 +979,13 @@ local function draw_save_review()
     imgui.BeginChild('##save_changes', { math.max(260, math.min(760, width - 80)),
         math.max(120, math.min(360, height - 240)) }, CHILD_BORDERS)
     saveReview.Draw(imgui, palette, cached.model)
-    local wm = wm_removal()
-    if (#wm.remove > 0) or (#wm.flags > 0) then
+    local gone = wm.removal()
+    if (#gone.remove > 0) or (#gone.flags > 0) then
         imgui.TextColored(palette.blue, 'Weapon cycle removals on Save')
         imgui.PushTextWrapPos(0)
-        draw_mode_report(wm)
-        for _, l in ipairs(wm.left) do
-            imgui.TextColored(palette.warn, 'Kept, worn only with /wm ' .. l.mode .. ': ' .. names_of(l.sets) .. '.')
+        wm.draw(gone)
+        for _, l in ipairs(gone.left) do
+            imgui.TextColored(palette.warn, 'Kept, worn only with /wm ' .. l.mode .. ': ' .. wm.names(l.sets) .. '.')
         end
         imgui.PopTextWrapPos()
     end
@@ -1595,6 +1604,7 @@ local function body()
     if set then draw_copy_popup(set) end
     draw_context_menu()
     draw_delete_confirmation()
+    m_gceditrelated.draw_weapon_sets()
     draw_copy_jobs()
     draw_find_item()
     draw_rename()
