@@ -29,6 +29,10 @@ local function xy(a, b) -- ImGui vectors come back as two numbers or as a table,
     if (type(a) == 'table') then return tonumber(a[1] or a.x), tonumber(a[2] or a.y) end
     return tonumber(a), tonumber(b)
 end
+local function ctrl_down()
+    local ok, io = pcall(imgui.GetIO)
+    return ok and (io ~= nil) and (io.KeyCtrl == true)
+end
 local function textw(t)
     local w = imgui.CalcTextSize(t)
     if (type(w) == 'table') then w = w[1] or w.x end
@@ -49,10 +53,10 @@ local COL_HEAD, COL_KEY, COL_DIM = { 0.93, 0.93, 0.96, 1.0 }, { 0.62, 0.68, 0.80
 local SOCKET = { 0.27, 0.32, 0.41, 0.55 } -- a slot's square (bg on)
 local SOCKET_BARE = { 0.27, 0.32, 0.41, 0.22 } -- the bare window: an empty slot only
 local SHADE, OUTLINE, WHITE = { 0, 0, 0, 0.45 }, { 0, 0, 0, 0.90 }, { 1, 1, 1, 1 }
-local MEANINGS = { 'lock', 'hold', 'feature', 'rp' }
+local MEANINGS = { 'lock', 'hold', 'feature', 'rp', 'warn' } -- warn: a swap that didn't go on
 local OWN = { lock = { 1.00, 0.35, 0.35 }, hold = { 1.00, 0.72, 0.25 }, feature = { 0.65, 0.40, 1.00 },
-    rp = { 1.00, 0.48, 0.72 } }
-local THEME_KEY = { lock = 'hp_0', hold = 'tp_max', feature = 'item', rp = 'ws' }
+    rp = { 1.00, 0.48, 0.72 }, warn = { 1.00, 0.54, 0.24 } }
+local THEME_KEY = { lock = 'hp_0', hold = 'tp_max', feature = 'item', rp = 'ws', warn = 'hp_25' }
 local COL = {}
 for k, c in pairs(OWN) do COL[k] = { c[1], c[2], c[3], 1.0 } end
 local themeMod, themeKey = nil, nil
@@ -117,6 +121,7 @@ end
 -- packets): a changed item (or its extdata: RP) is looked up again.
 local POLL = 0.25
 local nextPoll = 0
+local check_missed -- below source(): a swap that didn't go on
 local function poll()
     local now = os.clock()
     if (now < nextPoll) then return end
@@ -140,6 +145,7 @@ local function poll()
         end
         c.count = (id ~= 0) and it.Count or 0
     end
+    check_missed(now)
 end
 
 -- Encumbrance: 0x001B's uint32 at 0x60, one bit per equipment slot (XiPackets 0x001B 'encumbrance'; bit = slot, as
@@ -183,10 +189,81 @@ local function source(c)
     return w, false
 end
 
+-- A missed swap: the slot's last swap named another item, nothing holds the slot (lock, hold, encumbrance, LAC's
+-- disable) and it is still not on after MISS_AFTER seconds: the '!' mark. LAC's slot words name no item.
+local MISS_AFTER = 2
+local NOT_ITEMS = { remove = true, displaced = true, ignore = true }
+local function free(c)
+    if encumbered(c.game) or (holder(c.slot) ~= nil) then return false end
+    return not ((gState ~= nil) and (gState.Disabled ~= nil) and (gState.Disabled[c.slot] == true))
+end
+check_missed = function(now)
+    for _, c in ipairs(cells) do
+        local w, worn = source(c)
+        local want = (w ~= nil) and string.lower(tostring(w.name)) or nil
+        if (w ~= nil) and (not worn) and (not NOT_ITEMS[want]) and free(c) then
+            if (c.missName ~= want) then c.missName, c.missSince = want, now end
+            c.missed = (now - c.missSince) >= MISS_AFTER
+        else
+            c.missName, c.missSince, c.missed = nil, nil, false
+        end
+    end
+end
+-- Where a missed item is: an equip bag (LAC's gSettings.EquipBags), another bag, or none; read on hover, kept 3s.
+local BAG_NAME = { [0] = 'Inventory', 'Safe', 'Storage', 'Temporary', 'Locker', 'Satchel', 'Sack', 'Case', 'Wardrobe',
+    'Safe 2', 'Wardrobe 2', 'Wardrobe 3', 'Wardrobe 4', 'Wardrobe 5', 'Wardrobe 6', 'Wardrobe 7', 'Wardrobe 8' }
+local EQUIP_BAGS = { 0, 8, 10, 11, 12, 13, 14, 15, 16 } -- LAC's default gSettings.EquipBags
+local whereCache = {}
+local function where(name)
+    local l, now = string.lower(name), os.clock()
+    local hit = whereCache[l]
+    if (hit ~= nil) and (now < hit.until_) then return hit.kind, hit.bag, hit.r end
+    local bags = ((gSettings ~= nil) and (type(gSettings.EquipBags) == 'table')) and gSettings.EquipBags or EQUIP_BAGS
+    local equip = {}
+    for _, b in pairs(bags) do equip[b] = true end
+    local inv, res = AshitaCore:GetMemoryManager():GetInventory(), AshitaCore:GetResourceManager()
+    local kind, bag, item = 'none', nil, nil
+    for b = 0, 16 do
+        for i = 1, (gData.GetContainerMax(b) or 0) do
+            local it = inv:GetContainerItem(b, i)
+            local r = ((it ~= nil) and (it.Id ~= 0) and (it.Id ~= 65535) and ((it.Count or 0) > 0))
+                and res:GetItemById(it.Id) or nil
+            if (r ~= nil) and (r.Name ~= nil) and (string.lower(tostring(r.Name[1])) == l) then
+                if equip[b] then kind, bag, item = 'equip', BAG_NAME[b], r; break end
+                if (kind == 'none') then kind, bag, item = 'stored', BAG_NAME[b], r end
+            end
+        end
+        if (kind == 'equip') then break end
+    end
+    whereCache[l] = { kind = kind, bag = bag, r = item, until_ = now + 3 }
+    return kind, bag, item
+end
+-- Why a missed item isn't on, as far as the bags and the item's jobs/level tell.
+local function miss_text(name)
+    local kind, bag, r = where(name)
+    if (kind == 'none') then return 'Not on: no ' .. name .. ' in your bags' end
+    if (kind == 'stored') then return 'Not on: ' .. name .. ' is in ' .. tostring(bag) .. ' (not an equip bag)' end
+    local p = AshitaCore:GetMemoryManager():GetPlayer()
+    local job, lv = p:GetMainJob(), p:GetMainJobLevel()
+    if (r ~= nil) and (tonumber(r.Jobs) ~= nil) and (bit.band(r.Jobs, bit.lshift(1, job)) == 0) then
+        return 'Not on: your job can\'t wear ' .. name
+    end
+    if (r ~= nil) and ((tonumber(r.Level) or 0) > (tonumber(lv) or 99)) then
+        return 'Not on: ' .. name .. ' needs level ' .. tostring(r.Level)
+    end
+    return 'Not on: ' .. name .. ' (in ' .. tostring(bag) .. ')'
+end
+
 local function line(text, col)
     imgui.PushStyleColor(ImGuiCol_Text, col)
     imgui.TextUnformatted(text)
     imgui.PopStyleColor()
+end
+-- A layer label /gcedit can open: a set's own name, not a function (EquipIdle()) or a table path (Sets['x']).
+local function editable(by)
+    if (type(by) ~= 'string') or (by == '') or (by == '?') then return nil end
+    if string.find(by, '[%(%[]') or (string.sub(by, 1, 10) == 'gcinclude.') then return nil end
+    return by
 end
 -- Hover text for a slot: the item, its RP, the set that put it on, and whatever holds the slot.
 local function details(c)
@@ -224,6 +301,11 @@ local function details(c)
         end
     end
     if encumbered(c.game) then line('Encumbered: the game has locked this slot', COL.lock) end
+    if c.missed and (w ~= nil) then line(miss_text(tostring(w.name)), COL.warn) end
+    local set = (w ~= nil) and editable(w.by) or nil
+    if (set ~= nil) then line('Right-click: /gcedit ' .. set, COL_DIM) end
+    local mine = (inc ~= nil) and (inc.LockedSlots[c.slot] ~= nil) and (inc.LockedSlots[c.slot].user == true)
+    line('Ctrl+click: ' .. (mine and '/unlock ' or '/lock ') .. string.lower(c.name), COL_DIM)
 end
 
 -- One slot's marks over its icon: encumbrance X, holder border, RP corner, ammo count.
@@ -247,14 +329,18 @@ local function marks(dl, c, x, y, cell)
             dl:AddRectFilled(va(x2 - r, y), vb(x2, y + r), u32(COL.rp), 0)
         end
     end
-    if (c.item ~= nil) and ((c.stack or 1) > 1) then -- the ammo count, bottom right, outlined
-        local text = tostring(c.count)
-        local tx, ty = x2 - textw(text) - 2, y2 - imgui.GetTextLineHeight() + 1
+    local function outlined(text, tx, ty, col)
         local dark = u32(OUTLINE)
         dl:AddText(va(tx - 1, ty), dark, text); dl:AddText(va(tx + 1, ty), dark, text)
         dl:AddText(va(tx, ty - 1), dark, text); dl:AddText(va(tx, ty + 1), dark, text)
-        dl:AddText(va(tx, ty), u32(WHITE), text)
+        dl:AddText(va(tx, ty), u32(col), text)
     end
+    local ty = y2 - imgui.GetTextLineHeight() + 1
+    if (c.item ~= nil) and ((c.stack or 1) > 1) then -- the ammo count, bottom right
+        local text = tostring(c.count)
+        outlined(text, x2 - textw(text) - 2, ty, WHITE)
+    end
+    if c.missed then outlined('!', x + 3, ty, COL.warn) end -- a missed swap, bottom left
 end
 
 -- An icon at alpha (ImGui's Image takes no tint here: the style's Alpha fades it, popped before the marks).
@@ -269,7 +355,7 @@ end
 -- behind a worn slot. Returns the hovered slot's cell.
 local function grid_body(cell, gap, alpha, bare)
     budget = ICONS_PER_FRAME
-    local dl, hovered = imgui.GetWindowDrawList(), nil
+    local dl, hovered, click = imgui.GetWindowDrawList(), nil, nil
     for i, c in ipairs(cells) do
         if (((i - 1) % 4) ~= 0) then imgui.SameLine(0, gap) end
         local x, y = xy(imgui.GetCursorScreenPos())
@@ -278,19 +364,23 @@ local function grid_body(cell, gap, alpha, bare)
         end
         local t = icon(c.id)
         if (t ~= nil) then image(t.id, cell, alpha) else imgui.Dummy(size(cell, cell)) end
-        if imgui.IsItemHovered() then hovered = c end
+        if imgui.IsItemHovered() then
+            hovered = c
+            if imgui.IsItemClicked(1) then click = 'edit'
+            elseif imgui.IsItemClicked(0) and ctrl_down() then click = 'lock' end
+        end
         if (x ~= nil) then marks(dl, c, x, y, cell) end
     end
-    return hovered
+    return hovered, click
 end
 local function grid(cell, gap, alpha, bare)
     poll()
     colours()
     imgui.PushStyleVar(ImGuiStyleVar_ItemSpacing, va(gap, gap))
-    local ok, r = pcall(grid_body, cell, gap, alpha or 1, bare) -- an error must not skip the Pop
+    local ok, r, click = pcall(grid_body, cell, gap, alpha or 1, bare) -- an error must not skip the Pop
     imgui.PopStyleVar()
     if not ok then error(r, 0) end
-    return r
+    return r, click
 end
 local function sizes(scale) -- a slot (32px at scale 1, as the game's icons) and the gap between slots
     return math.floor(32 * scale + 0.5), math.max(1, math.floor(scale + 0.5))
@@ -349,9 +439,24 @@ end
 -- The window: no title bar, dragged anywhere; where it is let go is saved. Hidden with the game's interface, as the
 -- bar is (gcdisplay.UiHidden).
 local PAD, NO_PAD, CLEAR, FLAGS = { 4, 4 }, { 0, 0 }, { 0, 0, 0, 0 }, nil
+-- Right-click a slot: /gcedit on the set that put it on (or asked for it), that slot selected. Ctrl+click: /lock or
+-- /unlock it, as typed (its chat line).
+local function act(c, click)
+    if (click == 'edit') then
+        local w = source(c)
+        local set = (w ~= nil) and editable(w.by) or nil
+        if (set == nil) then inc.Say(c.name .. ': no set recorded for it yet'); return end
+        inc.EditorCommand(set, c.name)
+    elseif (click == 'lock') then
+        local mine = (inc.LockedSlots[c.slot] ~= nil) and (inc.LockedSlots[c.slot].user == true)
+        local cmd = (mine and 'unlock ' or 'lock ') .. string.lower(c.name)
+        AshitaCore:GetChatManager():QueueCommand(-1, '/lac fwd ' .. cmd)
+    end
+end
 local function window_body(cell, gap)
-    local c = grid(cell, gap, cfg.alpha, not cfg.bg)
+    local c, click = grid(cell, gap, cfg.alpha, not cfg.bg)
     if (c ~= nil) then tooltip(details, c) end
+    if (c ~= nil) and (click ~= nil) and (inc ~= nil) then act(c, click) end
     local x, y = xy(imgui.GetWindowPos())
     if (x ~= nil) and (y ~= nil) and not imgui.IsMouseDown(0) then
         x, y = math.floor(x + 0.5), math.floor(y + 0.5)
