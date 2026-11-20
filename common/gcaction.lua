@@ -187,9 +187,11 @@ end
 function gcaction.RecWrite(slot, item, immediate, blocked, by)
     if (not live()) or (#rec.writes >= 96) then return end
     local name = (type(item) == 'table') and item.Name or item
+    -- off: the slot is disabled (/lock, a hold): LAC's ProcessBuffer skips it
+    local off = (gState ~= nil) and (gState.Disabled ~= nil) and (gState.Disabled[slot] == true) or nil
     rec.writes[#rec.writes + 1] = { slot = slot, name = (type(name) == 'string') and name or '?',
         by = by or label or '?',
-        immediate = (immediate == true), blocked = (blocked == true), why = (by == nil) and why or nil }
+        immediate = (immediate == true), blocked = (blocked == true), why = (by == nil) and why or nil, off = off }
 end
 
 -- What was on when the action ran: modes, toggles, HP/MP/TP, buffs (ids), for the reasons /gcedit gives.
@@ -244,6 +246,17 @@ function gcaction.RecEnd()
     end
     GcRecords.byKey[key] = r
     GcRecords.n = (GcRecords.n or 0) + 1 -- bumped on every record: /gcedit rebuilds its views only when it changes
+    -- Each slot's last write that went on, for /gcgear's hover (the set that put it on); the same piece again keeps
+    -- the earlier layer, as /gcedit's layers do. A global, like GcRecords.
+    GcWornBy = GcWornBy or {}
+    local last = {}
+    for _, w in ipairs(r.writes) do
+        if (not w.blocked) and (not w.off) and (w.name ~= 'ignore') then
+            local prev = last[w.slot]
+            if (prev == nil) or (string.lower(prev.name) ~= string.lower(w.name)) then last[w.slot] = w end
+        end
+    end
+    for slot, w in pairs(last) do GcWornBy[slot] = { name = w.name, by = w.by, key = r.key } end
 end
 
 return gcaction

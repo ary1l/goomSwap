@@ -264,6 +264,7 @@ do
                 end
             end
             if gchud ~= nil then gchud.Bind(gcinclude, gcdisplay) end
+            if gcgear ~= nil then gcgear.Bind(gcinclude, gcdisplay) end
             if (mJob == 'RDM') or (mJob == 'BLM') or (mJob == 'SCH') or (mJob == 'GEO') then
                 gcdisplay.CreateToggle('Burst', false) -- /burst: Burst set on every nuke, not only on live skillchains
                 -- a job can add modes (RDM GEO BLM SCH: 'OccultAcumen')
@@ -498,6 +499,12 @@ do
                 gcinclude.AutoGearCommand(args)
             elseif args[1] == 'gcbar' then
                 gcdisplay.BarCommand(args)
+            elseif args[1] == 'gcgear' then
+                if gcgear ~= nil then
+                    gcgear.HandleCommand(args)
+                else
+                    gcinclude.Err('Gear grid is not loaded.')
+                end
             elseif args[1] == 'lock' then
                 gcinclude.LockCommand(args)
             elseif args[1] == 'unlock' then

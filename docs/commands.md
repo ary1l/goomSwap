@@ -36,7 +36,9 @@
 | `/forcestring` `/songlock` `/siphon` | BRD: Daurdabla on every song / keep Main/Sub on every enemy song (the BRD example's Lullaby always keeps them; instruments still swap, no TP lost) / SMN |
 | `/gcbar` `/gchud` | Status bar / the other boxes dropped under it ([Status bar and HUD](bar.md)) |
 | `/gcbar scale <0.5-3>` | Bar size, saved per character |
-| `/gcperf` | Timings in chat every 10s: idle/engaged handler, bar, engine tick; `/gcperf off` stops |
+| `/gcgear [on\|off]` | Worn-gear grid: icons, ammo, encumbrance, locks, holds, RP ([gear grid](bar.md#gear-grid-gcgear)) |
+| `/gcgear scale <0.5-3>` `alpha <0.2-1>` `bg [on\|off]` `map [on\|off]` `reset` | Its size, icon opacity, panel, the bar's map, first spot; saved per character |
+| `/gcperf` | Timings in chat every 10s: idle/engaged handler, bar, gear grid, engine tick; `/gcperf off` stops |
 | `/checksets` | Empty sets, bad names, wrong ear/ring (Sortie/"Right ear:" → Ear2); gear you don't own, wrong bag, other augments |
 | `/gcbuild [JOB]` | A draft job file: the job's example with only the gear you own → `<JOB>.proposed.lua`; on your job it opens in `/gcedit` to fill and save as `<JOB>.lua` ([/gcbuild](gcbuild.md)) |
 | `/gcedit [set]` | Set editor window: sets, slots with icons, gear you own; Save writes `<JOB>.lua` and reloads ([/gcedit](gcedit.md)) |

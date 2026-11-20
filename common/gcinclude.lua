@@ -23,12 +23,19 @@ else
     gchud = nil
     gcinclude.Err('HUD disabled: gchud.lua failed to load.')
 end
+local gearOk, gearModule = pcall(gFunc.LoadFile, 'common\\gcgear.lua') -- /gcgear and the bar's gear map
+if (gearOk == true) and (type(gearModule) == 'table') then
+    gcgear = gearModule
+else
+    gcgear = nil
+    gcinclude.Err('Gear grid disabled: gcgear.lua failed to load: ' .. tostring(gearModule))
+end
 
 gcinclude.AliasList = T{'gcmessages','wsdistance','dt','mdt','th','kite','mset','wsset','nukeset','burst','weapon',
     'death','sir','tankset','proc','packer','pupmode','wm','mw','sw','rw','ammoset','aminon','gchud','lock','unlock',
     'hoxne','gchelp','gckey','def','gce','checksets','gcperf','smartswap','autogear','gcbar','forcestring','songlock',
     'siphon','warpring','mea','holla','dem','capacity','jubilee','abyproc','dw','dynamisrp','gcbuild','gcedit',
-    'gcconfig','idleset'}
+    'gcconfig','idleset','gcgear'}
 -- Exit/use-on-self items: key = /command, value = exact /item name. Add a line, /lac reload.
 gcinclude.ExitItems = { ontic = 'ontic extremity', shard = 'v. con. shard', }
 for k in pairs(gcinclude.ExitItems) do
@@ -525,7 +532,8 @@ function gcinclude.PerfAdd(name, t0)
     e.n, e.total = e.n + 1, e.total + ms
     if (ms > e.max) then e.max = ms end
 end
-local PERF_ORDER = { { 'default', 'idle/engaged handler' }, { 'bar', 'bar' }, { 'tick', 'engine tick' } }
+local PERF_ORDER = { { 'default', 'idle/engaged handler' }, { 'bar', 'bar' }, { 'gear', 'gear grid' },
+    { 'tick', 'engine tick' } }
 function gcinclude.PerfReport(force)
     local p = gcinclude.Perf
     if (p == nil) then return end
@@ -1948,6 +1956,7 @@ function gcinclude.Help()
         'checks : failing actions cancel, reason in chat',
         'gear   : /autogear [on|off|regen N|refresh N|dt N|petdt N], /gcbuild [JOB] (the example with your gear, as <JOB>.proposed.lua), /gcedit [set] (set editor window, Ashita)',
         'bar    : /gcbar [on|off|pos x y|reset|scale N|theme name]',
+        'grid   : /gcgear [on|off|map on|off|pos x y|reset|scale N] (worn gear 4x4: locks, holds, RP; bar map)',
         'on/off : every toggle takes on|off (no arg flips it); /def off|dt|mdt|aminon',
         'nuke   : Burst set is automatic on a nuke landing in a live skillchain; /burst = Burst set on every nuke (HUD: * on the nuke cell)',
         'keys   : F7 wm, Shift+F7 wm default, F9 mset, Ctrl+F9 tankset, Alt+F9 wsset, F10 def, Alt+F10 kite,',
@@ -2660,6 +2669,7 @@ function gcinclude.Unload()
     ashita.events.unregister('d3d_present', 'gcinclude_tick')
     gcpacker.Stop()
     if (gchud ~= nil) then gchud.Stop() end
+    if (gcgear ~= nil) then gcgear.Stop() end
     gcinclude.UnlockSlots(nil)
     gcinclude.UnlockWeapons()
     if (gFunc.GcRawEquipSet ~= nil) then
@@ -2815,6 +2825,7 @@ function gcinclude.InitStep(tries)
     -- job change: fetch what inventory lacks
     (function() if (gcinclude.Stopped ~= true) then gcinclude.RunPacker(true) end end):once(3)
     if (gchud ~= nil) then gchud.Start() end
+    if (gcgear ~= nil) then gcgear.Start() end
     if (GcEditReopen == nil) and (gcinclude.UnchangedExample() ~= nil) then -- a new user's first load: say what to do
         gcinclude.Say('This is GoomSwap\'s ' .. gcinclude.UnchangedExample()
             .. ' example, as is: its sets name gear you may not own. '
