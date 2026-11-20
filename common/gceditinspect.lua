@@ -805,8 +805,11 @@ local function draw_set(set)
         if set.parentName == nil then
             editorState.ui.childKey = editorState.ui.childKey or { '' }
             imgui.PushItemWidth(240)
-            imgui.InputText('##gcchild_key', editorState.ui.childKey, 64)
+            imgui.InputTextWithHint('##gcchild_key', 'Buff name: Aftermath: Lv.3', editorState.ui.childKey, 64)
             imgui.PopItemWidth()
+            if imgui.IsItemHovered() then
+                set_tip('The buff\'s name as the game shows it (Aftermath: Lv.3, Haste).')
+            end
             local key = string.match(editorState.ui.childKey[1] or '', '^%s*(.-)%s*$')
             local taken = doc.model.byLower[string.lower(set.name .. "['" .. key .. "']")] ~= nil
             imgui.SameLine()
@@ -816,7 +819,6 @@ local function draw_set(set)
                 make_set(nil, nil, false, set, key)
             end
             if taken then imgui.TextColored(palette.warn, key .. ' exists in ' .. set.name .. '.') end
-            set_tip('The buff\'s name as the game shows it (Aftermath: Lv.3, Haste).')
         end
         local direct = false
         for _ in pairs(set.slots) do direct = true end
