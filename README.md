@@ -5,6 +5,8 @@ abilities, weapon skills, combat modes, defense and utility gear.
 
 For **Ashita v4** (LuAshitacast). Start from an example job file and the in-game set editor (`/gcedit`).
 
+![The set editor: sets, slots with icons and bags, and what each action wore](docs/gcedit_editor.png)
+
 ## Features
 
 - Weapon modes, TP and Aftermath protection, defense modes, idle Regen/Refresh, and status-specific gear.
@@ -16,6 +18,8 @@ For **Ashita v4** (LuAshitacast). Start from an example job file and the in-game
   arrange, hide and sort its headings, copy sets to other jobs, find an item in every job file, and edit
   settings for one character or all of them.
 - TP/WS/DT/idle sets per weapon mode or weapon type (`Tp_Chango`, `Tp_2h`).
+
+![The status bar and, hovered, the other boxes' modes](docs/gcbar.png)
 
 ## Install
 
@@ -49,9 +53,9 @@ picks it (F7 cycles). While it is on, its own sets go over their base: `Tp_<Name
 `Savage Blade_<Name>`, `Idle_<Name>`, `Dt_<Name>`... `Weapon_<Name>_1h` is worn instead when you can't dual wield,
 `Weapon_<Name>Acc` (or `Weapon_<Name>_Acc`) with `/mset acc`. All of it is done in `/gcedit`.
 
-**Add one** (Goomy, RDM, gets Mpu Gandring):
+**Add one** (example: an RDM adding Mpu Gandring as `/wm mpu`):
 
-1. On Goomy, `/gcedit`. For another job's file, click the file name in the top bar.
+1. `/gcedit` on that character. For another job's file, click the file name in the top bar.
 2. **+ New set**, name it `Weapon_Mpu` (one word, no spaces or `_`: `/wm mpu`), **Create**.
 3. **Weapon sets for /wm Mpu** opens. Tick the sets whose gear should differ with Mpu (`Tp_Mpu`, `Ws_Mpu`, a weapon
    skill's set...) and **Make**. They start empty: fill only what differs, and later changes to the base still apply.
@@ -62,7 +66,7 @@ picks it (F7 cycles). While it is on, its own sets go over their base: `Tp_<Name
    start in it.
 7. **Save + reload** (another job's file: **Save file**). The review lists the new `/wm` mode.
 
-**Remove one** (Jirachi, PLD, drops its Malignance Sword mode):
+**Remove one** (example: a PLD dropping its Malignance Sword mode):
 
 1. Right-click `Weapon_Malignance`, **Delete set...**. The box shows:
    - `/wm Malignance` coming out of `gcinclude.WeaponModes`;
