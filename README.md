@@ -64,7 +64,13 @@ picks it (F7 cycles). While it is on, its own sets go over their base: `Tp_<Name
    `Weapon_MpuAcc` if it joins them) and **Make**. They start as copies of `Weapon_Mpu`; change their Sub.
 6. Optional: right-click `Weapon_Mpu`, **/wm order**, to place it in the cycle; **Settings**, **DefaultWeapons**, to
    start in it.
-7. **Save + reload** (another job's file: **Save file**). The review lists the new `/wm` mode.
+7. **Save + reload** (another job's file: **Save file**, in effect when you change to that job). The review lists
+   the new `/wm` mode.
+
+After the reload it is in `/wm` (`/wm mpu`, F7) and on the bar: the weapon pill and its right-click menu, and that
+box's line in the other boxes' HUD (they read it within a second). The pill takes the colour of the mode's Main
+(else Range, else Sub): Mpu Gandring is prime, purple; `WeaponClass` adds your own. For another name to type,
+`HUDAbbr = { ['Mpu'] = 'gand' }` in char.lua's settings (`/wm gand`).
 
 **Remove one** (example: a PLD dropping its Malignance Sword mode):
 
@@ -74,6 +80,9 @@ picks it (F7 cycles). While it is on, its own sets go over their base: `Tp_<Name
      untick to keep them. Sets your job file's code names are kept and listed;
    - in orange, `DefaultWeapons` / `WeaponRoles` still naming it: change those in **Settings**.
 2. **Confirm deletion**, then **Save + reload**.
+
+After the reload it is gone from `/wm`, F7, the bar's menu and the HUD. A reload always starts in `DefaultWeapons`'s
+mode; if that still names the removed one (the orange note), in the list's first, None: no weapon mode.
 
 To swap one weapon for another instead, **Rename set...** (`Weapon_Malignance` to `Weapon_<New>`) renames the mode
 everywhere the file names it (the mode lists, `DefaultWeapons`, code) and, ticked, its `Weapon_Malignance_...` sets;
