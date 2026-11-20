@@ -787,7 +787,7 @@ local function draw_set(set)
     local when, short = ctx.actions.When(set)
     if when ~= nil then
         if string.find(when, 'No built-in trigger', 1, true) then -- GoomSwap never wears it by its name
-            if set.new or ctx.actions.Unused(set) then
+            if set.new or not ctx.actions.NamedInCode(set) then
                 short = 'nothing yet (never worn)'
                 when = 'GoomSwap never puts this set on by itself, and nothing in your job file names it, so it is never '
                     .. 'worn. Name it in a Handle function (gFunc.EquipSet(sets.' .. set.name .. '), ByName(\'' .. set.name
