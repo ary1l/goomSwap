@@ -583,7 +583,8 @@ function actionModel.New(context)
                 return 'as if weapon mode ' .. w2 .. ' (/wm), ' .. mset_of(mpart)
             end
             local modes = {}
-            for _, m in ipairs(((gcdisplay ~= nil) and gcdisplay.GetCycleValues('MeleeSet')) or {}) do
+            for _, m in ipairs(((gcdisplay ~= nil) and gcdisplay.GetCycleValues('MeleeSet'))
+                or setFile.MeleeModes(document.model.text)) do -- a job file not loaded: its own list
                 modes[#modes + 1] = m
             end
             for _, m in ipairs(document.newModes or {}) do
@@ -724,53 +725,194 @@ function actionModel.New(context)
         return nil
     end
 
+    -- == "Used for": when a set goes on. ==
+    -- What GoomSwap wears by itself, by the set's name (gcinclude CheckDefault / CheckWeapons, the midcast checks):
+    -- { short label, sentence }.
+    local ENGINE_WHEN = {
+        town = { 'in a town', 'In a town (gcinclude.Towns), whatever you are doing: GoomSwap puts it on over your sets.' },
+        mdt = { '/def MDT', 'While /def is on MDT: GoomSwap puts it on over your sets (for /def Aminon too, when '
+            .. 'Aminon is missing or empty).' },
+        aminon = { '/def Aminon', 'While /def is on Aminon: GoomSwap puts it on over your sets (mdt in its place when '
+            .. 'it is missing or empty).' },
+        sir = { 'spells, /sir on', 'Spells while /sir is on, as they go off (midcast), over your midcast sets; not the '
+            .. 'spells in SIRSkip.' },
+        th = { '/th on, untagged mob', 'While /th is on, until the mob is tagged: an action at an untagged mob, or '
+            .. 'engaged with one targeted (THF: all the time). Not at rest, nor THSkip spells.' },
+        xiroll = { 'idle, a roll at 11', 'Idle only, while one of your rolls totals 11 (XIRollSet when this set is '
+            .. 'empty).' },
+        proc = { 'engaged, /proc on', 'Engaged with /proc on: in place of your engaged sets, only this and the weapon '
+            .. 'mode go on (to hit a mob without killing it).' },
+        incapacitated = { 'slept, petrified, stunned or terrorized', 'While slept, petrified, stunned or terrorized: '
+            .. 'your /def set (mdt or Aminon, else Dt) without its weapons, then this one, over everything.' },
+        sleeping = { 'asleep', "While asleep, over everything (GoomSwap's own Sleeping set when this one is empty)." },
+        doomed = { 'doomed (Doom, Bane)', "While doomed (Doom or Bane), over everything (GoomSwap's own Doomed set "
+            .. 'when this one is empty).' },
+        lightbonus = { 'Healing Magic', 'Healing Magic spells as they go off (midcast), over your midcast sets.' },
+    }
+    -- What GoomSwap also wears by itself below a threshold (SetRegenRefreshGear), over your sets: { short, sentence }.
+    local AUTO_WHEN = {
+        dt = { 'below DTGearHPP% HP', 'GoomSwap also puts it on by itself below DTGearHPP% HP (Settings; 0: never), '
+            .. 'whatever you are doing.' },
+        idle_regen = { 'below RegenGearHPP% HP', 'GoomSwap also puts it on by itself below RegenGearHPP% HP '
+            .. '(Settings; 0: never), out of combat and without /dt.' },
+        idle_refresh = { 'below RefreshGearMPP% MP', 'GoomSwap also puts it on by itself below RefreshGearMPP% MP '
+            .. '(Settings; 0: never), out of combat and without /dt.' },
+        pet_dt = { 'pet below PetDTGearHPP% HP', "GoomSwap puts it on by itself while your pet is below "
+            .. 'PetDTGearHPP% HP (Settings; 0: never).' },
+    }
+    local STATUS_WORD = { engaged = true, idle = true, resting = true } -- the job analysis' status words
+    local EVENT_HANDLER = { Default = 'HandleDefault', Precast = 'HandlePrecast', Midcast = 'HandleMidcast',
+        Ability = 'HandleAbility', Weaponskill = 'HandleWeaponskill', Preshot = 'HandlePreshot',
+        Midshot = 'HandleMidshot', Item = 'HandleItem' }
+    local EVENT_ALL = { Default = 'idle and engaged', Precast = 'every precast', Midcast = 'every spell',
+        Ability = 'every ability', Weaponskill = 'every weapon skill', Preshot = 'every ranged attack',
+        Midshot = 'every ranged attack', Item = 'every item' }
+
+    -- Where the job file's handlers wear this set, read from the file (not run): { event, line, conds, nots } in file
+    -- order. conds: what has to be on (moving, kite mode, tank mode Main); nots: the earlier branches of its if
+    -- (not engaged).
+    local function job_uses(set)
+        if document.model.scan == nil then -- read once per file
+            local ok, r = pcall(scan_job, document.model.text or '')
+            document.model.scan = ok and r or {}
+        end
+        local uses = {}
+        for ev, refs in pairs(document.model.scan) do
+            for _, r in ipairs(refs) do
+                if (r.kind ~= 'idle') and (r.kind ~= 'mode') and (r.kind ~= 'th') then
+                    local n, pre, rest = resolve(r.arg, {}, r.vars)
+                    local built, cycWord = nil, nil -- a name built from a mode: FindSet('Tank_' .. tank)
+                    if (n == nil) and (pre ~= nil) and (pre ~= '')
+                        and (string.sub(set.lname, 1, #pre) == string.lower(pre)) then
+                        local cyc = cycle_of(rest, r.vars)
+                        if cyc ~= nil then
+                            n, built = set.name, cycle_text(cyc, string.sub(set.name, #pre + 1))
+                            cycWord = 'not ' .. cycle_text(cyc, '') -- 'not tank mode None': the mode says it
+                        end
+                    end
+                    if (n ~= nil) and (string.lower(n) == set.lname) then
+                        local conds, nots, status = {}, {}, false
+                        for _, f in ipairs(r.frames) do
+                            for _, p in ipairs(f.prior) do -- an earlier branch of its if: only a status says much
+                                local _, t = eval_cond(p, {}, r.vars)
+                                for _, x in ipairs(t or {}) do
+                                    if STATUS_WORD[x] then nots[#nots + 1] = 'not ' .. x end
+                                end
+                            end
+                            if f.cond ~= nil then
+                                local _, t = eval_cond(f.cond, {}, r.vars)
+                                for _, x in ipairs(t or {}) do
+                                    if (cycWord == nil) or (string.sub(x, 1, #cycWord) ~= cycWord) then
+                                        conds[#conds + 1] = x
+                                    end
+                                    if STATUS_WORD[x] then status = true end
+                                end
+                            end
+                        end
+                        if status then nots = {} end -- resting, not engaged: resting says it
+                        if built ~= nil then conds[#conds + 1] = built end
+                        uses[#uses + 1] = { event = ev, line = r.line, conds = conds, nots = nots }
+                    end
+                end
+            end
+        end
+        table.sort(uses, function(x, y) return x.line < y.line end)
+        return uses
+    end
+    -- The job file's uses as a sentence (each with its handler and line) and a short label.
+    local function uses_text(uses)
+        local parts, shorts, seen = {}, {}, {}
+        for _, u in ipairs(uses) do
+            local what = (#u.conds > 0) and table.concat(u.conds, ', ') or (EVENT_ALL[u.event] or u.event)
+            parts[#parts + 1] = what .. ((#u.nots > 0) and (', ' .. table.concat(u.nots, ', ')) or '') .. ' ('
+                .. (EVENT_HANDLER[u.event] or u.event) .. ', line ' .. u.line .. ')'
+            if not seen[what] then seen[what], shorts[#shorts + 1] = true, what end
+        end
+        return 'Your job file wears it: ' .. table.concat(parts, '; ') .. '.', table.concat(shorts, ' / ')
+    end
+    -- *_Received: the spells ReceivedSets sends to this set.
+    local function received_when(set)
+        if not string.match(set.lname, '_received$') then return nil end
+        local cfg = (gearEngine ~= nil) and gearEngine.settings or {}
+        local names = {}
+        for k, v in pairs((type(cfg.ReceivedSets) == 'table') and cfg.ReceivedSets or {}) do
+            if (type(v) == 'string') and (string.lower(v) == set.lname) then names[#names + 1] = k end
+        end
+        table.sort(names)
+        local what = (#names > 0) and table.concat(names, ', ') or 'a spell (ReceivedSets)'
+        return 'When ' .. what .. ' is on its way to you from another box (ReceivedSets; for up to ReceivedWindow '
+            .. 'seconds), over your sets.', what .. ' coming at you'
+    end
+
+    -- The sentence for "Used for", and its short label (nil: the sentence's first part). GoomSwap's own triggers
+    -- first, then the action the set's name is for, then where the job file's code wears it. Nothing: the marker
+    -- 'No built-in trigger' (the editor says whether the job file names it).
     local function when_description(set)
         local wtext, wshort = weapon_set_when(set)
         if wtext ~= nil then return wtext, wshort end
-        local a = action_for(set, modes_now())
-        if a == nil then
+        local text, short
+        local engine = ENGINE_WHEN[set.lname]
+        if engine ~= nil then
+            text, short = engine[2], engine[1]
+        else
+            text, short = received_when(set)
+        end
+        if text == nil then
+            local a = action_for(set, modes_now())
+            if a ~= nil then
+                if a.event == 'Midcast' then
+                    if a.action ~= nil then
+                        text = 'When ' .. a.action .. ' goes off (midcast).'
+                    elseif a.skill ~= nil then
+                        text = 'When any ' .. a.skill .. ' spell goes off (midcast).'
+                    else
+                        text =
+                            'Every spell, as it goes off (midcast). This is the base layer; skill- and spell-specific sets go on afterward and can replace its slots. Empty slots keep the gear already worn, including Precast gear.'
+                    end
+                elseif a.event == 'Precast' then
+                    if a.action ~= nil then
+                        text = 'At the start of ' .. a.action .. "'s cast (precast)."
+                    elseif a.skill ~= nil then
+                        text = 'At the start of any ' .. a.skill .. ' spell (precast).'
+                    else
+                        text = 'At the start of every spell cast (precast).'
+                    end
+                elseif a.event == 'Weaponskill' then
+                    text = (a.action ~= nil) and ('When using ' .. a.action .. '.') or 'When using a weapon skill.'
+                elseif a.event == 'Ability' then
+                    text = 'When using ' .. (a.action or 'this ability') .. '.'
+                elseif (a.event == 'Default') and not a.dt and (set.name ~= 'Dt') and (set.name ~= 'Movement') then
+                    -- Dt and Movement: the job file's code wears them (below); no status of their own
+                    if a.key == 'Idle' then
+                        text = 'While standing idle.'
+                    elseif a.key == 'Engaged' then
+                        text = 'While engaged in combat.'
+                    elseif a.key == 'Resting' then
+                        text = 'While resting.'
+                    end
+                end
+                if (text == nil) and (a.event ~= 'Default') then text = a.label end
+                if (text ~= nil) and (a.as ~= nil) then text = text .. ' (' .. a.as .. ')' end
+            end
+        end
+        local auto = AUTO_WHEN[set.lname]
+        local uses = job_uses(set)
+        local jtext, jshort
+        if #uses > 0 then jtext, jshort = uses_text(uses) end
+        if text == nil then -- nothing by its name: the job file's code, and GoomSwap's threshold
+            if jtext ~= nil then text, short = jtext, jshort end
+            if auto ~= nil then
+                text = (text ~= nil) and (text .. ' ' .. auto[2]) or auto[2]
+                short = (short ~= nil) and (short .. ' / ' .. auto[1]) or auto[1]
+            end
+        else
+            if auto ~= nil then text = text .. ' ' .. auto[2] end
+            if jtext ~= nil then text = text .. ' ' .. jtext end
+        end
+        if text == nil then
             return 'No built-in trigger was found. This set is worn only if your job file explicitly equips or combines it; inspect its Handle functions.'
         end
-        local description
-        if a.event == 'Midcast' then
-            if a.action ~= nil then
-                description = 'When ' .. a.action .. ' goes off (midcast).'
-            elseif a.skill ~= nil then
-                description = 'When any ' .. a.skill .. ' spell goes off (midcast).'
-            else
-                description =
-                    'Every spell, as it goes off (midcast). This is the base layer; skill- and spell-specific sets go on afterward and can replace its slots. Empty slots keep the gear already worn, including Precast gear.'
-            end
-        elseif a.event == 'Precast' then
-            if a.action ~= nil then
-                description = 'At the start of ' .. a.action .. "'s cast (precast)."
-            elseif a.skill ~= nil then
-                description = 'At the start of any ' .. a.skill .. ' spell (precast).'
-            else
-                description = 'At the start of every spell cast (precast).'
-            end
-        elseif a.event == 'Weaponskill' then
-            description = (a.action ~= nil) and ('When using ' .. a.action .. '.') or 'When using a weapon skill.'
-        elseif a.event == 'Ability' then
-            description = 'When using ' .. (a.action or 'this ability') .. '.'
-        elseif a.event == 'Default' then
-            if a.dt or (set.name == 'Dt') then
-                description = 'When DT mode is active.'
-            elseif set.name == 'Movement' then
-                description = 'When kite mode is active.'
-            elseif a.key == 'Idle' then
-                description = 'While standing idle.'
-            elseif a.key == 'Engaged' then
-                description = 'While engaged in combat.'
-            elseif a.key == 'Resting' then
-                description = 'While resting.'
-            end
-        end
-        description = description or a.label
-        if (description ~= nil) and (a.as ~= nil) and (set.name ~= 'Dt') and (set.name ~= 'Movement') then
-            description = description .. ' (' .. a.as .. ')'
-        end
-        return description
+        return text, short
     end
 
     -- An expected record for the set's action (the shape gcaction records have, plus expected = true), or nil.
@@ -1560,6 +1702,8 @@ function actionModel.New(context)
         ActionFor = action_for,
         VariantName = variant_name,
         Unused = unused,
+        -- the job file's code names the set (sets.X, 'X', a name it builds from 'X_'), read from the file
+        NamedInCode = function(set) return named_in_code(set.lname) end,
         -- the /wm mode a set is worn with, by its name (Tp_Chango, Savage Blade_Chango_Acc, Idle_Chango: Chango)
         WeaponModeOf = function(set)
             local st = {}

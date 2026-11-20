@@ -36,7 +36,9 @@ and its toggle wears it. Until then it falls back as the table says (`Aminon` â†
 | `Tp_<Mode>` `Ws_<Mode>` `Tp_<Mode>_<mset>` | TP / WS gear for that weapon mode, over `Tp_Default` / `Ws_Default` (`Tp_Chango`) |
 | `Tp_2h` `Tp_1h` `Ws_2h` `Tp_2h_<mset>` | a weapon with no `Tp_<Mode>` of its own, by its Main's type |
 | `<set>_<Mode>` `Dt_Chango` `Idle_Chango` `['Savage Blade_Naegling']` | that weapon mode's version of a set worn by name, `Dt` or `Idle` (else `_2h` / `_1h`) |
-| `Dt` `mdt` `Aminon` `SIR` `TH` `Movement` | their toggles; `TH` until tagged; `Aminon` missing or empty: `mdt` |
+| `mdt` `Aminon` `SIR` `TH` | their toggles (`/def`, `/sir`, `/th`); `TH` until tagged; `Aminon` missing or empty: `mdt` |
+| `Dt` | `/dt`: every example wears it by `ByName('Dt')`; and on its own below `DTGearHPP` HP |
+| `Movement` | your job file, not GoomSwap: every example wears it while moving, most also on `/kite` (PLD wears `kite`, BLU `Evasion`) |
 | `Dt_<mset>` | `/dt` with an `/mset` mode on (`Dt_SubtleBlow`), over `Dt`: every example wears `Dt` by `ByName` |
 | `Idle_Refresh` `Idle_Regen` `Idle_Regain` | `/idleset`; low MP/HP |
 | `Midshot_Acc` | `/mset acc` |

@@ -97,6 +97,8 @@ a job file's own setting still wins. Details: [Settings](settings.md).
 
 - A comment right after a set's `{` in the job file shows under its name as **Note** (`Foe = { -- Lullaby keeps
   your weapons`).
+- **Used for** (over the slots) says when a set goes on: GoomSwap's own trigger for it, else where your job file's
+  code wears it, read from the file (`moving, not engaged (HandleDefault, line 732)`); hover it for each place.
 - Search the set list by a set's name or an item (`nyame`: every set wearing a Nyame piece, as edited), or fold its
   headings; for your main sets at the top, make a heading of your own and move them into it
   ([Headings](#headings)). **Unsaved sets**, **Issues**, **Missing**, **Needs RP** and **Unused** filter it; the `?`

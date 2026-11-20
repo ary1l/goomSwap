@@ -274,7 +274,14 @@ function analysis.New(options)
             return nil, { 'name has ' .. fpat }
         end
         local nb = string.match(a, '^ByName%((.-)%)$')
-        if nb ~= nil then return nil, { 'a set for ' .. nb } end
+        if nb ~= nil then -- ByName(spell.Name): a set named for the action; Family(...): for its family
+            local v = string.match(nb, '^([%a_]+)%.Name$')
+            if (v ~= nil) and ACTION_VAR[v] then return nil, { 'a set named for it' } end
+            v = string.match(nb, '^Family%(([%a_]+)%.Name%)$')
+            if (v ~= nil) and ACTION_VAR[v] then return nil, { 'a set for its family' } end
+            if nb == 'spell.Skill' then return nil, { 'a set for its skill' } end
+            return nil, { 'a set for ' .. nb }
+        end
         local pct, pn = string.match(a, '([HM]PP)%s*<=?%s*(%d+)$')
         if pct ~= nil then return nil, { string.sub(pct, 1, 2) .. ' ' .. pn .. '% or less' } end
         return nil, { 'code: ' .. ((#a > 48) and (string.sub(a, 1, 45) .. '...') or a) }
@@ -347,7 +354,7 @@ function analysis.New(options)
                 if lv ~= nil then
                     local names, vals = split_top(lv, ','), split_top(rhs, ',')
                     for i, v in ipairs(names) do
-                        local r, info = trim(vals[i] or ''), nil
+                        local r, info = trim((string.gsub(vals[i] or '', ';%s*$', ''))), nil -- the line's ; off
                         local buffs = {}
                         for b in string.gmatch(r, 'gcinclude%.BuffCount%((.-)%)') do
                             buffs[#buffs + 1] = buff_text(b)
