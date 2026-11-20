@@ -1031,13 +1031,8 @@ local function draw_context_menu()
                     editorState.ui.cmp = { set = selected.name, with = set.name }
                     editorState.selection.tab = 'compare'
                 end
+                imgui.Separator()
             end
-            if item((editorState.preferences.favorites[set.name] and 'Unfavorite' or 'Favorite') .. '##context') then
-                editorPreferences.ToggleFavorite(editorState.preferences, set.name)
-                save_preferences()
-                feedback('Updated favorite: ' .. set.name .. '.')
-            end
-            imgui.Separator()
             set_action_entries(set, 'edit')
             if item('Copy to other jobs...##copyjobs') then editorState.ui.copyJobs = { set = set.name, open = true } end
             if imgui.IsItemHovered() then
@@ -1187,7 +1182,6 @@ local function rename_new(set, new)
     for _, u in ipairs(editorState.history.entries or {}) do
         if u.set == old then u.set = new end
     end
-    editorPreferences.RenameFavorites(editorState.preferences, { [old] = new })
     if editorState.selection.setName == old then editorState.selection.setName = new end
     doc.revision = doc.revision + 1
 end

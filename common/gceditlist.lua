@@ -474,13 +474,12 @@ local function draw_sets()
         .. tostring(ui.issuesOnly[1])
         .. tostring(ui.editedOnly[1])
         .. tostring(ui.missingOnly[1])
-        .. tostring(ui.needsRpOnly[1]) .. ':' .. (editorState.preferences.favoriteRevision or 0)
+        .. tostring(ui.needsRpOnly[1])
         .. ':' .. tostring(ui.showHidden[1]) .. tostring(ui.unusedOnly[1])
     if editorState.cache.listKey ~= key then
         local buckets = {}
         for _, set in ipairs(editorState.document.model.list) do
-            if matches_set(set, find) and not (editorState.preferences.favorites[set.name]
-                and not editorState.document.deleted[set.name]) then
+            if matches_set(set, find) then
                 buckets[set.group] = buckets[set.group] or {}
                 table.insert(buckets[set.group], set)
             end
@@ -510,29 +509,7 @@ local function draw_sets()
     local scroll = (editorState.cache.listSel ~= editorState.selection.setName)
     editorState.cache.listSel = editorState.selection.setName
     imgui.BeginChild('##gcedit_setlist', { 0, 0 }, 0)
-    local favorites = editorPreferences.Shortcuts(
-        editorState.preferences, editorState.document.model, function(candidate)
-            return not editorState.document.deleted[candidate.name] and matches_set(candidate, find)
-        end
-    )
-    if #favorites > 0 and editorPanels.Section(imgui, palette, 'Favorites##shortcuts', ImGuiTreeNodeFlags_DefaultOpen) then
-        for index, name in ipairs(favorites) do
-            local favorite = editorState.document.model.byName[name]
-            local status = set_status(favorite)
-            local dirty, col = status.edited, set_color(favorite, status)
-            if col then imgui.PushStyleColor(ImGuiCol_Text, col) end
-            if imgui.Selectable(name .. (dirty and ' (unsaved)' or '') .. '###shortcut_Favorites' .. index,
-                editorState.selection.setName == name) then
-                editorState.selection.back = nil
-                editorPreferences.Select(editorState, name)
-            end
-            if imgui.IsItemClicked(1) then request_context('set', editorState.document.model.byName[name]) end
-            if imgui.IsItemHovered() then set_tip(set_completion_tip(favorite, status)) end
-            if col then imgui.PopStyleColor() end
-        end
-    end
-    if #favorites > 0 then imgui.Separator() end
-    if #editorState.cache.listRows == 0 and #favorites == 0 then imgui.TextColored(palette.dim, 'No set matches.') end
+    if #editorState.cache.listRows == 0 then imgui.TextColored(palette.dim, 'No set matches.') end
     local clip = clip_begin()
     for _, grp in ipairs(editorState.cache.listRows) do
         -- a group folds on a click of its heading; a search shows every match, and the open set's group opens

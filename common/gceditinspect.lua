@@ -739,13 +739,6 @@ local function draw_set(set)
         imgui.SameLine(0, 12)
     end
     imgui.TextUnformatted(set.bracket and ("['" .. set.name .. "']") or set.name)
-    editorPanels.SameLineIfFits(imgui, 110)
-    if imgui.SmallButton( (editorState.preferences.favorites[set.name] and 'Unfavorite' or 'Favorite')
-        .. '##set_favorite' ) then
-        editorPreferences.ToggleFavorite(editorState.preferences, set.name)
-        save_preferences()
-        feedback('Updated favorite: ' .. set.name .. '.')
-    end
     if by_name(set) then tag('worn by name', palette.blue) end
     if (editorState.document.renames or {})[set.name] then
         tag('renamed to ' .. editorState.document.renames[set.name] .. ' on Save', palette.warn)

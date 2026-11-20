@@ -392,7 +392,6 @@ local function save()
         cleanupError = pruneErr
         if pruneErr then ctx.gearEngine.Err('Saved, but backup cleanup failed: ' .. tostring(pruneErr)) end
     end
-    editorPreferences.RenameFavorites(editorState.preferences, renames)
     if renames[editorState.selection.setName or ''] then
         editorState.selection.setName = renames[editorState.selection.setName]
     end

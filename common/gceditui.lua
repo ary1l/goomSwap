@@ -136,15 +136,7 @@ do
 local state = {}
 
 function state.Defaults()
-    return { left = 280, middle = 744, density = 'Compact', favorites = {}, favoriteRevision = 0, dirty = false }
-end
-
-local escapes = { ['\\'] = '\\', n = '\n', r = '\r', t = '\t' }
-local function escape(value)
-    return (value:gsub('\\', '\\\\'):gsub('\n', '\\n'):gsub('\r', '\\r'):gsub('\t', '\\t'))
-end
-local function unescape(value)
-    return (value:gsub('\\(.)', function(c) return escapes[c] or c end))
+    return { left = 280, middle = 744, density = 'Compact', dirty = false }
 end
 
 function state.Decode(text)
@@ -156,9 +148,7 @@ function state.Decode(text)
             if width and width == width and width >= 80 and width <= 4000 then preferences[key] = width end
         elseif key == 'density' and (value == 'Compact' or value == 'Comfortable') then
             preferences.density = value
-        elseif key == 'favorite' then
-            preferences.favorites[unescape(value)] = true
-        end
+        end -- others (favorite: removed) are left out, and gone at the next save
     end
     return preferences
 end
@@ -166,14 +156,6 @@ end
 function state.Encode(preferences)
     local lines = { 'GoomSwap editor preferences 1', 'left\t' .. preferences.left, 'middle\t' .. preferences.middle }
     lines[#lines + 1] = 'density\t' .. (preferences.density == 'Comfortable' and 'Comfortable' or 'Compact')
-    local favorites = {}
-    for name, enabled in pairs(preferences.favorites) do
-        if enabled then favorites[#favorites + 1] = name end
-    end
-    table.sort(favorites)
-    for _, name in ipairs(favorites) do
-        lines[#lines + 1] = 'favorite\t' .. escape(name)
-    end
     return table.concat(lines, '\n') .. '\n'
 end
 
@@ -190,22 +172,6 @@ function state.Save(path, preferences, write)
     local ok, err = write(path, state.Encode(preferences))
     if ok then preferences.dirty = false end
     return ok, err
-end
-
--- Saved renames carry favorites over to the new names.
-function state.RenameFavorites(preferences, renames)
-    for old, new in pairs(renames or {}) do
-        if preferences.favorites[old] then
-            preferences.favorites[old], preferences.favorites[new] = nil, true
-            preferences.dirty = true
-        end
-    end
-end
-
-function state.ToggleFavorite(preferences, name)
-    preferences.favorites[name] = not preferences.favorites[name] or nil
-    preferences.favoriteRevision = (preferences.favoriteRevision or 0) + 1
-    preferences.dirty = true
 end
 
 function state.Feedback(editor, text)
@@ -280,18 +246,6 @@ function state.Select(editor, name, slot, tab)
     editor.selection.setName, editor.selection.slot = name, slot
     editor.cache.cover, editor.ui.drag = nil, nil
     editor.selection.tab = tab or (slot and 'gear') or (editor.selection.tab == 'summary' and 'summary') or 'action'
-end
-
-function state.Shortcuts(preferences, model, visible)
-    local favorites = {}
-    local function allowed(name)
-        return model.byName[name] and (not visible or visible(model.byName[name]))
-    end
-    for name, enabled in pairs(preferences.favorites) do
-        if enabled and allowed(name) then favorites[#favorites + 1] = name end
-    end
-    table.sort(favorites)
-    return favorites
 end
 
 ui.State = state

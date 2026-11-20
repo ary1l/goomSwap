@@ -97,8 +97,9 @@ a job file's own setting still wins. Details: [Settings](settings.md).
 
 - A comment right after a set's `{` in the job file shows under its name as **Note** (`Foe = { -- Lullaby keeps
   your weapons`).
-- Search or fold the set list; Favorites appear once at the top. **Unsaved sets**, **Issues**, **Missing**,
-  **Needs RP** and **Unused** filter it; the `?` after the filters shows the colours as your theme draws them.
+- Search or fold the set list; for your main sets at the top, make a heading of your own and move them into it
+  ([Headings](#headings)). **Unsaved sets**, **Issues**, **Missing**, **Needs RP** and **Unused** filter it; the `?`
+  after the filters shows the colours as your theme draws them.
 - Set colours (GoomSwap's own; a theme recolours them but keeps them apart): amber unsaved, red missing gear,
   violet unfinished RP, then green (all 16 slots, or a ready overlay) and teal (all 12 armor slots; weapons left
   out on purpose).
@@ -161,4 +162,4 @@ a job file's own setting still wins. Details: [Settings](settings.md).
 cancelling writes nothing. Saving checks the file didn't change on disk and still parses, writes a dated backup,
 then reloads (reopening the editor if ticked). Code-defined sets need a text editor; everything outside the gear
 definitions is kept as written. The newest ten editor backups per file are kept (`EditorBackupKeep` in
-char.lua's `settings`, `0` keeps all). Widths, favorites and density live in the job's `.gcedit-ui` file.
+char.lua's `settings`, `0` keeps all). Widths and density live in the job's `.gcedit-ui` file.

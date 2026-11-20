@@ -12,7 +12,7 @@ For **Ashita v4** (LuAshitacast). Start from an example job file and the in-game
 - Bellhop packer (asks only for what's missing and reachable; never twice across reloads).
 - `/gcbar` status bar and `/gchud` multibox controls; colours follow goomui's preset.
 - `/gcbuild` to draft a job file from carried gear; `/gcedit` to browse the character's job files, inspect gear,
-  fill and compare inherited gear/stat totals, keep item details visible, favorite sets, and resize panels;
+  fill and compare inherited gear/stat totals, keep item details visible, and resize panels;
   arrange, hide and sort its headings, copy sets to other jobs, find an item in every job file, and edit
   settings for one character or all of them.
 - TP/WS/DT/idle sets per weapon mode or weapon type (`Tp_Chango`, `Tp_2h`).
