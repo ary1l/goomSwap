@@ -97,7 +97,8 @@ a job file's own setting still wins. Details: [Settings](settings.md).
 
 - A comment right after a set's `{` in the job file shows under its name as **Note** (`Foe = { -- Lullaby keeps
   your weapons`).
-- Search or fold the set list; for your main sets at the top, make a heading of your own and move them into it
+- Search the set list by a set's name or an item (`nyame`: every set wearing a Nyame piece, as edited), or fold its
+  headings; for your main sets at the top, make a heading of your own and move them into it
   ([Headings](#headings)). **Unsaved sets**, **Issues**, **Missing**, **Needs RP** and **Unused** filter it; the `?`
   after the filters shows the colours as your theme draws them.
 - Set colours (GoomSwap's own; a theme recolours them but keeps them apart): amber unsaved, red missing gear,

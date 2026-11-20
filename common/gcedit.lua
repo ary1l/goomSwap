@@ -29,12 +29,28 @@ local augments_of, scan_owned, index_all_items, allItems =
     bagScan.AugmentsOf, bagScan.ScanOwned, bagScan.IndexAllItems, bagScan.AllItems
 
 local imgui = require('imgui')
--- Use literal text so item stats containing % are not interpreted as formats.
+-- Use literal text so item stats containing % are not interpreted as formats. Wrapped at 440px, or at its widest
+-- line when it came wrapped by hand (every line short: wrap()) and wider than that, so no line wraps twice.
 local function set_tip(t)
+    t = tostring(t)
+    local at = 440
+    if imgui.CalcTextSize ~= nil then
+        local widest = 0
+        for line in string.gmatch(t, '[^\n]+') do
+            if #line > 72 then
+                widest = 0
+                break
+            end
+            local w = imgui.CalcTextSize(line)
+            w = (type(w) == 'table') and (w.x or w[1]) or w
+            if (type(w) == 'number') and (w > widest) then widest = w end
+        end
+        if widest > at then at = widest + 16 end
+    end
     imgui.PushStyleColor(ImGuiCol_PopupBg, { 0.055, 0.06, 0.08, 1 })
     imgui.BeginTooltip()
-    imgui.PushTextWrapPos(440)
-    imgui.TextUnformatted(tostring(t))
+    imgui.PushTextWrapPos(at)
+    imgui.TextUnformatted(t)
     imgui.PopTextWrapPos()
     imgui.EndTooltip()
     imgui.PopStyleColor()
@@ -1384,7 +1400,18 @@ local function body()
     else
         pill('saved', palette.ok, palette.okBg)
     end
-    editorPanels.SameLineIfFits(imgui, text_w('Rescan bags') + text_w('Reload file') + text_w('Save + reload') + 78)
+    -- the file's actions at the right edge, apart from the view's (on a line of their own when they don't fit)
+    local d = editorPanels.Density(editorState.preferences.density)
+    local need = text_w('Rescan bags') + text_w('Reload file')
+        + text_w(editorState.document.inactive and 'Save file' or 'Save + reload') + 6 * d.padding[1] + 2 * d.spacing[1]
+    imgui.SameLine()
+    local avail = imgui.GetContentRegionAvail()
+    avail = (type(avail) == 'number') and avail or (avail.x or avail[1])
+    if avail < need then
+        imgui.NewLine()
+    elseif (imgui.SetCursorPosX ~= nil) and (imgui.GetCursorPosX ~= nil) then
+        imgui.SetCursorPosX(imgui.GetCursorPosX() + avail - need)
+    end
     if imgui.Button('Rescan bags##gcedit') then
         rescan()
         feedback('Bags rescanned: ' .. #editorState.inventory.items .. ' items. Unsaved edits kept.')
