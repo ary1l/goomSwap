@@ -630,51 +630,43 @@ local function draw_layers(set)
 end
 
 -- Shared entries keep More and right-click set actions identical.
-
-local function set_action_entries(set)
+-- Revert / Rename / Delete rows. part 'edit': Revert and Rename; 'drop': Delete (Discard for a new set); nil: all.
+local function set_action_entries(set, part)
+    local item, doc = ctx.menu_item, editorState.document
     if set.new then
-        if imgui.Button('Rename set...##gcedit_new') then
-            editorState.ui.requestRenameSet = set.name
-            imgui.CloseCurrentPopup()
-        end
-        if red_button('Discard new set##gcedit') then
+        if (part ~= 'drop') and item('Rename set...##gcedit_new') then editorState.ui.requestRenameSet = set.name end
+        if (part ~= 'edit') and item('Discard new set##gcedit', true, false, palette.bad) then
             drop_new(set)
-            imgui.CloseCurrentPopup()
             return true
         end
-    else
+        return false
+    end
+    if part ~= 'drop' then
         local count = 0
-        for _ in pairs(editorState.document.edits[set.name] or NONE) do count = count + 1 end
-        local disabled = count == 0 and imgui.BeginDisabled ~= nil
-        if disabled then imgui.BeginDisabled() end
-        if imgui.Button('Revert set##gcedit') and count > 0 then
-            editorState.document.edits[set.name] = nil
-            editorState.document.revision = editorState.document.revision + 1
+        for _ in pairs(doc.edits[set.name] or NONE) do count = count + 1 end
+        if item('Revert set##gcedit', count > 0) then
+            doc.edits[set.name] = nil
+            doc.revision = doc.revision + 1
             feedback('Reverted unsaved slot edits in ' .. set.name .. '.')
-            imgui.CloseCurrentPopup()
         end
-        if disabled then imgui.EndDisabled() end
-        imgui.Separator()
-        if (editorState.document.renames or {})[set.name] then
-            if imgui.Button('Cancel rename##gcedit') then
+        if (doc.renames or {})[set.name] then
+            if item('Cancel rename##gcedit') then
                 ctx.stage_rename(set.name, nil)
                 feedback('Cancelled renaming ' .. set.name .. '.')
-                imgui.CloseCurrentPopup()
             end
-        elseif not editorState.document.deleted[set.name] and imgui.Button('Rename set...##gcedit') then
+        elseif not doc.deleted[set.name] and item('Rename set...##gcedit') then
             editorState.ui.requestRenameSet = set.name
-            imgui.CloseCurrentPopup()
         end
-        if editorState.document.deleted[set.name] then
-            if imgui.Button('Undo deletion##context') then
-                editorState.document.deleted[set.name] = nil
-                editorState.document.revision = editorState.document.revision + 1
+    end
+    if part ~= 'edit' then
+        if doc.deleted[set.name] then
+            if item('Undo deletion##context') then
+                doc.deleted[set.name] = nil
+                doc.revision = doc.revision + 1
                 feedback('Cancelled deletion of ' .. set.name .. '.')
-                imgui.CloseCurrentPopup()
             end
-        elseif red_button('Delete set...##gcedit') then
+        elseif item('Delete set...##gcedit', true, false, palette.bad) then
             editorState.ui.requestDeleteSet = set.name
-            imgui.CloseCurrentPopup()
         end
     end
     return false
@@ -805,8 +797,11 @@ local function draw_set(set)
         if set.parentName == nil then
             editorState.ui.childKey = editorState.ui.childKey or { '' }
             imgui.PushItemWidth(240)
-            imgui.InputText('##gcchild_key', editorState.ui.childKey, 64)
+            imgui.InputTextWithHint('##gcchild_key', 'Buff name: Aftermath: Lv.3', editorState.ui.childKey, 64)
             imgui.PopItemWidth()
+            if imgui.IsItemHovered() then
+                set_tip('The buff\'s name as the game shows it (Aftermath: Lv.3, Haste).')
+            end
             local key = string.match(editorState.ui.childKey[1] or '', '^%s*(.-)%s*$')
             local taken = doc.model.byLower[string.lower(set.name .. "['" .. key .. "']")] ~= nil
             imgui.SameLine()
@@ -816,7 +811,6 @@ local function draw_set(set)
                 make_set(nil, nil, false, set, key)
             end
             if taken then imgui.TextColored(palette.warn, key .. ' exists in ' .. set.name .. '.') end
-            set_tip('The buff\'s name as the game shows it (Aftermath: Lv.3, Haste).')
         end
         local direct = false
         for _ in pairs(set.slots) do direct = true end
