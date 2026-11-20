@@ -133,9 +133,11 @@ end
 local THEMED = { sel = 'mp', ok = 'hp_full', warn = 'hp_25', bad = 'hp_0', rp = 'tp_rdy', aug = 'tp_rdy',
     armor = 'spell',
     save = 'mp', saveHi = 'mp' }
-local TINTS = { selBg = { 'mp', 0.30 }, okBg = { 'hp_full', 0.22 }, warnBg = { 'hp_25', 0.22 },
-    badBg = { 'hp_0', 0.22 },
-    rpBg = { 'tp_rdy', 0.18 } }
+-- backgrounds: their accent (as themed, below) mixed into the panel by amount
+local TINTS = { selBg = { 'sel', 0.30 }, okBg = { 'ok', 0.22 }, warnBg = { 'warn', 0.22 }, badBg = { 'bad', 0.22 },
+    rpBg = { 'rp', 0.18 } }
+-- the set colours (list, borders, pills) a preset must not merge: first wins its shade
+local APART = { 'bad', 'warn', 'rp', 'ok', 'armor' }
 local SHADE = { save = 0.62, saveHi = 0.78 } -- button fills under white text
 local ownPalette = {}
 for _, keys in ipairs({ THEMED, TINTS }) do
@@ -164,8 +166,10 @@ local function apply_theme(name)
         local c, shade = gctheme.Color(name, preset), SHADE[key] or 1
         palette[key][1], palette[key][2], palette[key][3] = c[1] * shade, c[2] * shade, c[3] * shade
     end
+    gctheme.KeepApart(palette, APART, ownPalette, 25)
     for key, tint in pairs(TINTS) do
-        gctheme.Tint(palette[key], name, tint[1], palette.panel, tint[2])
+        local c, base, t = palette[tint[1]], palette.panel, tint[2]
+        for i = 1, 3 do palette[key][i] = base[i] + (c[i] - base[i]) * t end
     end
 end
 
@@ -1209,7 +1213,7 @@ local function body()
             end
         end
         imgui.Separator()
-        if imgui.CollapsingHeader('Diagnostics##gcedit_diagnostics') then
+        if editorPanels.Section(imgui, palette, 'Diagnostics##gcedit_diagnostics') then
             if imgui.Button(profiler.enabled and 'Stop sampling' or 'Start fresh sample') then
                 profiler.enabled = not profiler.enabled
                 if profiler.enabled then profiler.Reset() end
@@ -1589,7 +1593,7 @@ local function render()
     imgui.PushStyleColor(ImGuiCol_ChildBg, palette.panel)
     imgui.PushStyleColor(ImGuiCol_Border, palette.edge)
     imgui.PushStyleColor(ImGuiCol_Header, palette.selBg)
-    imgui.PushStyleColor(ImGuiCol_HeaderHovered, palette.selBg)
+    imgui.PushStyleColor(ImGuiCol_HeaderHovered, palette.btnHi) -- hover grey: blue means selected
     imgui.PushStyleColor(ImGuiCol_Text, palette.text)
     local n = 6
     for _, kc in ipairs(theme()) do

@@ -1013,7 +1013,12 @@ local function draw_context_menu()
     local context = editorState.ui.context
     local set = context and editorState.document.model.byName[context.set]
     if set then
-        imgui.TextUnformatted(set.name .. (context.slot and (' / ' .. context.slot) or ''))
+        -- a title, not a row: heading colour, and for a set the heading it sits under (Move up / down are in it)
+        imgui.TextColored(palette.section, set.name .. (context.slot and (' / ' .. context.slot) or ''))
+        if context.kind == 'set' then
+            imgui.SameLine()
+            imgui.TextColored(palette.dim, 'in ' .. set.group)
+        end
         imgui.Separator()
         if context.kind == 'set' then
             local item = ctx.menu_item

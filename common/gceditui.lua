@@ -104,6 +104,11 @@ function ui.ElementDots(imgui, list)
         if (o.e == 'Dark') and (o.v > 0) then dl:AddCircle(DOT_AT, r, imgui.GetColorU32(DARK_RING), 10, 1) end
     end
 end
+-- How wide ElementDots draws list.
+function ui.ElementDotsWidth(imgui, list)
+    local h = imgui.GetTextLineHeight and imgui.GetTextLineHeight() or 14
+    return math.floor(h * 0.5 + 0.5) * #list
+end
 -- A block of item text: lines naming an element drawn as dot + value, the rest as text, stacked as one block.
 function ui.StatText(imgui, value)
     local lines = ui.ElementRuns(value)
@@ -378,6 +383,15 @@ function panels.Splitter(imgui, colors, id, height, value, default)
     return value, false
 end
 
+-- A collapsing section header in the button greys: blue stays for what is selected.
+function panels.Section(imgui, colors, label, flags)
+    imgui.PushStyleColor(ImGuiCol_Header, colors.btn)
+    imgui.PushStyleColor(ImGuiCol_HeaderHovered, colors.btnHi)
+    local open = imgui.CollapsingHeader(label, flags or 0)
+    imgui.PopStyleColor(2)
+    return open
+end
+
 function panels.SameLineIfFits(imgui, required)
     imgui.SameLine()
     local available = imgui.GetContentRegionAvail()
@@ -592,7 +606,8 @@ end
 do
 -- Structured, literal-text item tooltips shared by cards and the gear picker.
 local tooltip = {}
-tooltip.ElementTotals, tooltip.ElementDots = ui.ElementTotals, ui.ElementDots -- the gear cards' resistances
+tooltip.ElementTotals, tooltip.ElementDots, tooltip.ElementDotsWidth = ui.ElementTotals, ui.ElementDots,
+    ui.ElementDotsWidth -- the gear cards' resistances
 local wraps, wrapOrder, wrapIndex = {}, {}, 0
 local wrapUi, wrapFont, wrapMeasure
 local hover
@@ -1283,8 +1298,8 @@ local reasons = {
 local function notes(imgui, colors, model, id, name)
     local n = #model.notes + model.code
     if n == 0 then return end
-    if imgui.CollapsingHeader((name and (name .. ': ') or '') .. 'Other effects / not totaled (' .. n .. ')##' .. id,
-        0) then
+    if ui.Panels.Section(imgui, colors, (name and (name .. ': ') or '') .. 'Other effects / not totaled (' .. n .. ')##'
+        .. id) then
         if model.code > 0 then text(imgui, colors.warn, model.code .. ' code-defined slots were not evaluated.') end
         for _, group in ipairs(model.noteGroups) do
             text(imgui, colors.blue, group.slot .. ': ' .. group.item)

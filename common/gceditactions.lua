@@ -91,12 +91,18 @@ function actionModel.New(context)
     }
     local STATUS = { Idle = 'standing idle', Engaged = 'fighting (engaged)', Resting = 'resting' }
 
-    local function action_label(r)
-        if r.event == 'Default' then return STATUS[r.seenKey or r.key] or (r.seenKey or r.key) end
+    -- what it was, and its kind ('weapon skill'; nil for idle/engaged/resting)
+    local function action_parts(r)
+        if r.event == 'Default' then return STATUS[r.seenKey or r.key] or (r.seenKey or r.key), nil end
         if r.expected and (r.label ~= nil) then
-            return r.label
+            return r.label, nil
         end -- expected, no action of its own: 'a weapon skill with no set of its own'
-        return (r.action or '?') .. '  (' .. (KIND[r.event] or r.event) .. ')'
+        local kind = KIND[r.event] or r.event
+        return r.action or '?', (kind ~= '') and kind or nil
+    end
+    local function action_label(r)
+        local main, kind = action_parts(r)
+        return (kind ~= nil) and (main .. ' (' .. kind .. ')') or main
     end
 
     local function source_label(by)
@@ -1492,6 +1498,7 @@ function actionModel.New(context)
         Labels = labels_of,
         RecordsFor = records_for,
         ActionLabel = action_label,
+        ActionParts = action_parts,
         SourceLabel = source_label,
         Explain = why,
         View = layer_view,

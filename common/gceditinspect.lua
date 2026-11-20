@@ -232,21 +232,30 @@ local function draw_cell(set, slot)
     imgui.BeginChild('##gcedit_cell_' .. slot, { ctx.CELL_W, ctx.CELL_H }, CHILD_BORDERS, ImGuiWindowFlags_NoScrollbar)
     imgui.TextColored(selected and palette.blue or (changed and palette.warn
         or ((rp and rp.unfinished) and palette.rp or ((cover ~= nil) and palette.override or palette.dim))), slot)
+    local bag, ok, badge, badgeX -- the bag badge, right-aligned: what sits before it stops short of it
+    if (v ~= nil) and (v.kind == 'item') then
+        bag, ok = where(v.name)
+        badge = is_slot_word(v) and 'Rule' or cardText.Bag(bag)
+        badgeX = ctx.CELL_W - text_w(badge) - 14
+    end
     local res = (v ~= nil) and (v.kind == 'item') and not is_slot_word(v) and resist_of(v, owned)
     if res then -- its resistances, as the game's element icons: one value when they all match
         imgui.SameLine(0, 8)
-        itemTooltip.ElementDots(imgui, res)
-        if (res.same ~= nil) then
-            imgui.SameLine(0, 2)
-            imgui.TextColored(palette.dim, ((res.same > 0) and '+' or '') .. res.same)
+        local room = (badgeX or ctx.CELL_W) - 5 - imgui.GetCursorPosX() - 4 -- the badge's fill starts 5 left
+        local dotsW = itemTooltip.ElementDotsWidth(imgui, res)
+        local value = (res.same ~= nil) and (((res.same > 0) and '+' or '') .. res.same) or nil
+        if dotsW <= room then -- no room: left to the item's tooltip
+            itemTooltip.ElementDots(imgui, res)
+            if (value ~= nil) and (dotsW + 2 + text_w(value) <= room) then
+                imgui.SameLine(0, 2)
+                imgui.TextColored(palette.dim, value)
+            end
         end
     end
-    if (v ~= nil) and (v.kind == 'item') then
-        local bag, ok = where(v.name)
-        local t = is_slot_word(v) and 'Rule' or cardText.Bag(bag)
-        imgui.SameLine(ctx.CELL_W - text_w(t) - 14)
+    if badge ~= nil then
+        imgui.SameLine(badgeX)
         pill(
-            t,
+            badge,
             is_slot_word(v) and palette.blue
                 or (bag == nil and palette.bad or (ok and palette.ok or palette.warn)),
             is_slot_word(v) and palette.invBg
@@ -254,9 +263,12 @@ local function draw_cell(set, slot)
         )
     end
     local gh = (v == nil) and ghost_of(set, slot) or nil -- commented out in the file (/gcbuild)
+    local faded = (gh ~= nil) and (ImGuiStyleVar_Alpha ~= nil) -- not worn: its icon faint, like its name
+    if faded then imgui.PushStyleVar(ImGuiStyleVar_Alpha, 0.4) end
     draw_icon(
         ((v ~= nil) and (v.kind == 'item') and item_id(v.name)) or ((gh ~= nil) and item_id(gh.name)) or nil, ctx.ICON
     )
+    if faded then imgui.PopStyleVar() end
     imgui.SameLine()
     imgui.BeginGroup()
     if gh ~= nil then
@@ -271,14 +283,21 @@ local function draw_cell(set, slot)
         )
     end
     imgui.EndGroup()
-    -- Fixed footer rows keep every card aligned, regardless of the item's name or metadata.
-    imgui.SetCursorPosY(ctx.CELL_H - 40)
+    -- Fixed footer rows keep every card aligned, regardless of the item's name or metadata; placed by the font's
+    -- line height from the bottom, so a bigger font never stacks them on each other or on the border.
+    local lh = (imgui.GetTextLineHeight ~= nil) and imgui.GetTextLineHeight() or 16
+    local statusY = ctx.CELL_H - lh - 6
+    imgui.SetCursorPosY(statusY - lh - 2)
     imgui.Dummy({ 0, 0 }) -- register the new extent even when this card has no footer text
+    local rankShown = false -- R<rank>/<cap>, in the RP colour while unfinished: Needs RP below would repeat it
     if v and v.kind == 'item' and not is_slot_word(v) then
         local meta = {}
         local path = v.path or (owned and owned.path)
         if path then meta[#meta + 1] = path end
-        if rp and owned then meta[#meta + 1] = 'R' .. owned.rank .. (owned.cap and ('/' .. owned.cap) or '') end
+        if rp and owned then
+            meta[#meta + 1] = 'R' .. owned.rank .. (owned.cap and ('/' .. owned.cap) or '')
+            rankShown = true
+        end
         if #meta == 0 and ((v.augs and v.augs ~= '') or (owned and #owned.augs > 0)) then
             meta[#meta + 1] = 'Augmented'
         end
@@ -293,8 +312,8 @@ local function draw_cell(set, slot)
     elseif changed then
         imgui.TextColored(palette.warn, 'Cleared on Save')
     end
-    if changed or cover or (rp and rp.unfinished) then
-        imgui.SetCursorPosY(ctx.CELL_H - 22)
+    if changed or cover or ((rp and rp.unfinished) and not rankShown) then
+        imgui.SetCursorPosY(statusY)
         local status = cover and ((changed and 'Unsaved > ' or 'Replaced: ') .. cover.short)
             or (changed and 'Unsaved' or 'Needs RP')
         imgui.TextColored(changed and palette.warn or (cover and palette.override or palette.rp),
@@ -367,13 +386,28 @@ end
 local TABLE_FLAGS =
     bit.bor(ImGuiTableFlags_RowBg or 0, ImGuiTableFlags_Borders or 0, ImGuiTableFlags_SizingStretchProp or 0)
 
+-- Text joined by '  |  ', wrapped only between its parts: a line never ends on a |.
+local function parts_line(color, text)
+    local n = 0
+    for part in string.gmatch(text .. '  |  ', '(.-)  |  ') do
+        n = n + 1
+        if n > 1 then
+            imgui.SameLine(0, 0)
+            local avail = imgui.GetContentRegionAvail()
+            local w = (type(avail) == 'number') and avail or (avail.x or avail[1])
+            if w >= text_w('  |  ' .. part) then part = '  |  ' .. part else imgui.NewLine() end
+        end
+        imgui.TextColored(color, part)
+    end
+end
+
 local function draw_layer_view(set, V)
     imgui.PushTextWrapPos(0)
     imgui.TextUnformatted(V.head)
     imgui.PopTextWrapPos()
     if V.state ~= nil then
         imgui.PushTextWrapPos(0)
-        imgui.TextColored(palette.dim, V.state)
+        parts_line(palette.dim, V.state)
         if V.buffs ~= nil then imgui.TextColored(palette.dim, V.buffs) end
         imgui.PopTextWrapPos()
     end
@@ -429,7 +463,7 @@ local function draw_layer_view(set, V)
     end
 
     imgui.Spacing()
-    if imgui.CollapsingHeader('Equip order and reasons##gcedit_order', 0) then
+    if editorPanels.Section(imgui, palette, 'Equip order and reasons##gcedit_order') then
         imgui.PushTextWrapPos(0)
         for _, o in ipairs(V.order) do
             imgui.TextColored(o.mine and palette.blue or palette.text, o.title)
@@ -443,8 +477,8 @@ local function draw_layer_view(set, V)
         end
         imgui.PopTextWrapPos()
     end
-    if (#V.missing + #V.variants > 0) and imgui.CollapsingHeader('Set suggestions (' .. (#V.missing + #V.variants)
-        .. ')##gcedit_suggestions', 0) then
+    if (#V.missing + #V.variants > 0) and editorPanels.Section(imgui, palette, 'Set suggestions ('
+        .. (#V.missing + #V.variants) .. ')##gcedit_suggestions') then
         imgui.Spacing()
         imgui.TextColored(palette.dim, 'Optional set definitions for this action:')
         help(
@@ -584,9 +618,14 @@ local function draw_layers(set)
     local rows = #recs + ((exp ~= nil) and 1 or 0)
     imgui.BeginChild('##gcedit_recs', { 0, 22 * math.min(rows, 4) + 8 }, CHILD_BORDERS)
     if exp ~= nil then
-        if imgui.Selectable(ctx.actions.ActionLabel(exp) .. '##gcexp', exp == pick) then
+        local main, kind = ctx.actions.ActionParts(exp)
+        if imgui.Selectable(main .. '##gcexp', exp == pick) then
             editorState.cache.recKey = exp.key
             pick = exp
+        end
+        if kind ~= nil then
+            imgui.SameLine()
+            imgui.TextColored(palette.dim, '(' .. kind .. ')')
         end
         imgui.SameLine()
         imgui.TextColored(palette.blue, 'expected: not seen yet')
@@ -600,10 +639,17 @@ local function draw_layers(set)
         end
     end
     for _, r in ipairs(recs) do
-        r.rowLabel = r.rowLabel or (ctx.actions.ActionLabel(r) .. '##gcrec' .. r.key)
+        if r.rowLabel == nil then -- its name as the row; its kind after it, dim
+            local main, kind = ctx.actions.ActionParts(r)
+            r.rowLabel, r.rowKind = main .. '##gcrec' .. r.key, (kind ~= nil) and ('(' .. kind .. ')') or nil
+        end
         if imgui.Selectable(r.rowLabel, r == pick) then
             editorState.cache.recKey = r.key
             pick = r
+        end
+        if r.rowKind ~= nil then
+            imgui.SameLine()
+            imgui.TextColored(palette.dim, r.rowKind)
         end
         imgui.SameLine()
         imgui.TextColored(palette.ok, 'seen')

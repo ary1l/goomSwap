@@ -98,9 +98,10 @@ a job file's own setting still wins. Details: [Settings](settings.md).
 - A comment right after a set's `{` in the job file shows under its name as **Note** (`Foe = { -- Lullaby keeps
   your weapons`).
 - Search or fold the set list; Favorites appear once at the top. **Unsaved sets**, **Issues**, **Missing**,
-  **Needs RP** and **Unused** filter it; the `?` beside Issues explains the colours.
-- Set colours: amber unsaved, red missing gear, violet unfinished RP, then green (all 16 slots, or a ready
-  overlay) and teal (all 12 armor slots; weapons left out on purpose).
+  **Needs RP** and **Unused** filter it; the `?` after the filters shows the colours as your theme draws them.
+- Set colours (GoomSwap's own; a theme recolours them but keeps them apart): amber unsaved, red missing gear,
+  violet unfinished RP, then green (all 16 slots, or a ready overlay) and teal (all 12 armor slots; weapons left
+  out on purpose).
 - Drag dividers to resize (double-click resets). Density is remembered per job.
 - **Theme** (top bar): the editor's colours. Same as the bar (default), **Match goomui** (the theme goomui saved for
   this character), GoomSwap's own, or any of the 30 presets; hover one to preview. Kept per character
