@@ -724,6 +724,103 @@ function wm.draw(r)
     end
 end
 
+-- What DefaultWeapons / WeaponRoles name that nothing offers: the engine skips those at load without a word
+-- (gcruntime SetCycleFrom finds a value by its name, start or part). Each a sentence; worked out once per edit.
+local PICK_LIST = { Main = 'MainModes', Sub = 'SubModes', Range = 'RangeModes', Ammo = 'AmmoModes' }
+local PICK_CMD = { Main = '/mw', Sub = '/sw', Range = '/rw', Ammo = '/ammoset' }
+ctx.weapon_problems = function()
+    local doc = editorState.document
+    local memo = editorState.cache.weaponProblems
+    if (memo ~= nil) and (memo.doc == doc) and (memo.rev == doc.revision) then return memo.list end
+    local S, out = settingsFiles, {}
+    local function offered(list, v) -- list (lowercase names) has v by its name or a part of one
+        local lv = string.lower(v)
+        for n in pairs(list) do
+            if string.find(n, lv, 1, true) then return true end
+        end
+        return false
+    end
+    local labels = (type(S.Job('WeaponItemMap')) == 'table') and S.Job('WeaponItemMap') or {}
+    local picks = {} -- what each slot's /mw /sw /rw /ammoset can pick: its list, any Weapon_ set's item there
+    for slot, list in pairs(PICK_LIST) do
+        picks[slot] = {}
+        for _, v in ipairs((type(S.Job(list)) == 'table') and S.Job(list) or {}) do
+            if type(v) == 'string' then picks[slot][string.lower(v)] = true end
+        end
+        for label in pairs(labels) do picks[slot][string.lower(tostring(label))] = true end
+    end
+    local modes = {}
+    for _, m in ipairs(setFile.WeaponModes(doc.model.text or '') or {}) do modes[string.lower(m)] = true end
+    for _, m in ipairs(registration_plan().modes) do modes[string.lower(m)] = true end
+    for _, s in ipairs(doc.model.list) do
+        if (s.parentName == nil) and string.match(s.lname, '^weapon_') and not doc.deleted[s.name] then
+            for slot in pairs(PICK_LIST) do
+                local v = current(s, slot)
+                if (v ~= nil) and (v.name ~= nil) then picks[slot][string.lower(v.name)] = true end
+            end
+        end
+    end
+    local function mode(where, v)
+        if (type(v) == 'string') and not offered(modes, v) and (string.lower(v) ~= 'none') then
+            out[#out + 1] = where .. " '" .. v .. "': no /wm mode by that name (gcinclude.WeaponModes, Weapon_ sets). "
+                .. 'Skipped at load.'
+        end
+    end
+    local dw = S.Job('DefaultWeapons')
+    if type(dw) == 'string' then
+        mode('DefaultWeapons', dw)
+    elseif type(dw) == 'table' then
+        for k, v in pairs(dw) do
+            if k == 'Weapons' then
+                mode('DefaultWeapons Weapons', v)
+            elseif (PICK_LIST[k] ~= nil) and (type(v) == 'string') and (string.lower(v) ~= 'none')
+                and not offered(picks[k], v) then
+                out[#out + 1] = 'DefaultWeapons ' .. k .. " '" .. v .. "': not in " .. PICK_LIST[k] .. ', nor any Weapon_ '
+                    .. "set's " .. k .. '. Skipped at load.'
+            end
+        end
+    end
+    local roles = S.Job('WeaponRoles')
+    for k, v in pairs((type(roles) == 'table') and roles or {}) do mode('WeaponRoles ' .. tostring(k), v) end
+    table.sort(out)
+    editorState.cache.weaponProblems = { doc = doc, rev = doc.revision, list = out }
+    return out
+end
+settingsFiles.WeaponProblems = ctx.weapon_problems -- the Settings window shows them too
+-- The /mw /sw /rw /ammoset picks the job file lists (not None): { '/mw: Burtgang, Naegling', ... }.
+ctx.weapon_picks = function()
+    local out = {}
+    for _, slot in ipairs({ 'Main', 'Sub', 'Range', 'Ammo' }) do
+        local names = {}
+        local list = settingsFiles.Job(PICK_LIST[slot])
+        for _, v in ipairs((type(list) == 'table') and list or {}) do
+            if (type(v) == 'string') and (string.lower(v) ~= 'none') then names[#names + 1] = v end
+        end
+        if #names > 0 then out[#out + 1] = PICK_CMD[slot] .. ': ' .. table.concat(names, ', ') end
+    end
+    return out
+end
+-- What a new set named Weapon_... will be: a /wm mode of its own, or one mode's own set; nil for other names.
+-- Returns the sentence and whether it is a warning.
+ctx.weapon_name_note = function(name)
+    local rest = string.match(name or '', '^[Ww]eapon_(.+)$')
+    if rest == nil then return nil end
+    if string.find(rest, '%s') then
+        return "A space makes /wm read two words: use one word (Weapon_MpuGandring, /wm mpu).", true
+    end
+    local msets = setFile.MeleeModes(editorState.document.model.text, editorState.document.newModes)
+    for _, m in ipairs((ctx.actions ~= nil) and ctx.actions.WeaponModes() or {}) do
+        if (string.lower(m) ~= string.lower(rest)) and setFile.WeaponVariantOf('Weapon_' .. rest, m, msets) then
+            return 'Weapon_' .. m .. "'s own set: worn in its place (_1h: when you can't dual wield; an /mset "
+                .. 'mode: with it).', false
+        end
+    end
+    if string.find(rest, '_', 1, true) then
+        return 'Use one word after Weapon_: a name with _ reads as another mode\'s own set.', true
+    end
+    return 'A new /wm mode: /wm ' .. string.lower(rest) .. ' (added to gcinclude.WeaponModes on Save).', false
+end
+
 local function undo_slot(set, slot)
     local edits = editorState.document.edits[set.name]
     if not edits or not edits[slot] then return end

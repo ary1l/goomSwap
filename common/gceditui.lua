@@ -1270,14 +1270,24 @@ local function stat_name(imgui, colors, name) -- '<Element> resistance' after it
     text(imgui, colors.text, name)
 end
 function views.DrawSummary(imgui, colors, name, model)
-    text(imgui, colors.blue, name .. (model.layered and ' - resolved gear totals' or ' - defined gear totals'))
-    text(imgui, colors.dim, model.coverage)
-    ui.Panels.Tip(imgui, colors, coverageHelp)
+    local fs = imgui.GetFontSize() or 16
+    local function tw(t)
+        local w = imgui.CalcTextSize(t)
+        return ((type(w) == 'table') and (w.x or w[1]) or w) or 0
+    end
+    -- one line: whose totals, what they cover; the help (coverage, how the preview works) behind one (?)
+    imgui.TextColored(colors.blue, name .. (model.layered and ' - with inherited gear' or ' - this set only'))
+    ui.Panels.SameLineIfFits(imgui, tw(model.coverage .. ' (?)') + fs)
+    imgui.TextColored(colors.dim, model.coverage)
+    imgui.SameLine()
+    imgui.TextColored(colors.dim, '(?)')
+    ui.Panels.Tip(imgui, colors, (model.layered and 'Layer preview: unresolved slots stay unknown.\n'
+        or 'This set only: slots it leaves out are not totaled.\n') .. coverageHelp .. '\n\n' .. previewHelp)
     if model.pending then text(imgui, colors.warn, 'Includes unsaved changes.') end
-    layers(imgui, colors, model)
-    text(imgui, colors.dim, model.layered and 'Layer preview; unresolved slots stay unknown. Preview help (?)'
-        or 'Definition only; omitted slots are not totaled. Preview help (?)')
-    ui.Panels.Tip(imgui, colors, previewHelp)
+    if model.layered and (#model.layers > 1) then layers(imgui, colors, model) -- just the set itself: no line
+    else
+        for _, warning in ipairs(model.layerWarnings or {}) do text(imgui, colors.warn, warning) end
+    end
     if model.baseOnly > 0 then text(imgui, colors.warn, model.baseOnly
         .. (model.baseOnly == 1 and ' item has' or ' items have')
             .. ' base stats only; exact augments are unknown.') end
@@ -1285,24 +1295,37 @@ function views.DrawSummary(imgui, colors, name, model)
     imgui.BeginChild('##summary_rows', { 0, 0 }, 0)
     local available = imgui.GetContentRegionAvail()
     local width = type(available) == 'number' and available or (available.x or available[1])
-    local pairs = width >= (imgui.GetFontSize() or 16) * 35 and 2 or 1
+    if model.colW == nil then -- the widest stat name (room for an element dot) and value: columns that fit them
+        local nw, vw = 0, 0
+        for _, row in ipairs(model.rows) do
+            nw, vw = math.max(nw, tw(row.name)), math.max(vw, tw(row.text))
+        end
+        model.colW = { nw + fs, vw }
+    end
+    local gap = fs * 2 -- between one stat's value and the next stat's name
+    local pairW = model.colW[1] + model.colW[2] + gap
+    local pairs = math.max(1, math.min(3, math.floor(width / pairW)))
     if #model.rows == 0 then text(imgui, colors.dim, 'No nonzero listed bonuses in these definitions.')
     elseif imgui.BeginTable('##summary_stats', pairs * 2,
-        (ImGuiTableFlags_RowBg or 0) + (ImGuiTableFlags_SizingStretchProp or 0)) then
+        (ImGuiTableFlags_RowBg or 0) + (ImGuiTableFlags_SizingStretchProp or 0), { math.min(width, pairs * pairW), 0 }) then
         for _ = 1, pairs do
-            imgui.TableSetupColumn('Stat', 0, 3)
-            imgui.TableSetupColumn('Total', 0, 1)
+            imgui.TableSetupColumn('Stat', 0, model.colW[1])
+            imgui.TableSetupColumn('Total', 0, model.colW[2] + gap)
         end
-        imgui.TableHeadersRow()
         local group, index = nil, 0
         for _, row in ipairs(model.rows) do
-            if row.group ~= group then
+            if row.group ~= group then -- the group's name heads its rows (no header row: it said Stat / Total)
                 group, index = row.group, 0
                 imgui.TableNextRow(); imgui.TableNextColumn(); imgui.TextColored(colors.blue, group)
             end
             if index % pairs == 0 then imgui.TableNextRow() end
             imgui.TableNextColumn(); stat_name(imgui, colors, row.name)
-            imgui.TableNextColumn(); ui.Panels.Text(imgui, colors.text, row.text)
+            imgui.TableNextColumn()
+            local room = imgui.GetContentRegionAvail() -- the value at the column's right, short of the gap
+            room = (type(room) == 'number') and room or (room.x or room[1])
+            local push = room - tw(row.text) - gap
+            if (push > 0) and (imgui.SetCursorPosX ~= nil) then imgui.SetCursorPosX(imgui.GetCursorPosX() + push) end
+            ui.Panels.Text(imgui, colors.text, row.text)
             index = index + 1
         end
         imgui.EndTable()
