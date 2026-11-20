@@ -60,6 +60,9 @@ The weapon's class comes from the mode's Main, else Range, else Sub; add your ow
 
 - **Drop:** opens on hover; in the screen's bottom half the lines rise above the bar. The box with it on also prints
   the other boxes' chat lines as `[Name]`.
+- **A box's gear:** hover its name/job in the drop: its 16 slots with the [gear grid](#gear-grid-gcgear)'s marks, then
+  what holds which slot (encumbered, `/lock`, Aminon/item use..., TP hold, needs RP, missed swaps) and how old it is.
+  Each box shares its slots in `luashitacast/hud/<Name>.gear` when they change (every 3s at least).
 - `/gchud debug` lists what it reads.
 
 ## Gear grid (`/gcgear`)
@@ -91,4 +94,5 @@ Storage...; LAC's `EquipBags`), your job can't wear it, or it needs a higher lev
   `/gcgear bg on` (the bar's panel behind it), `/gcgear reset` (first spot, scale and alpha 1). Saved per character.
 - **Colours** follow the bar's colour preset (`Theme`, goomui's), kept apart from each other.
 - Replaces equipmon: unload it (`/addon unload equipmon`) once this is placed.
+- The other boxes' grids: hover a name in the `/gchud` drop (above).
 
