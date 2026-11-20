@@ -14,7 +14,7 @@ Edits your loaded job file. Changes stay in memory until you confirm a save. `/g
 | To add | Do |
 |---|---|
 | A set for an action | Name it after the action: `Barrage`, `Cure`, `Savage Blade` |
-| A weapon mode (`/wm`) | Name it `Weapon_<Name>` with Main/Sub; Save adds it to `gcinclude.WeaponModes`. `Weapon_<Name>_1h` is used when you can't dual wield |
+| A weapon mode (`/wm`) | Name it `Weapon_<Name>` with Main/Sub; Save adds it to `gcinclude.WeaponModes`. Deleting the set takes it out on Save; a `DefaultWeapons` / `WeaponRoles` still naming it is flagged (change it in **Settings**). `Weapon_<Name>_1h` is used when you can't dual wield |
 | TP or WS gear for one weapon | `Tp_<Name>` / `Ws_<Name>` (`Tp_Chango`): worn over `Tp_Default` / `Ws_Default` while `/wm <Name>` is on; `Tp_Chango_Acc` with `/mset acc` too. Right-click `Tp_Default` (or `Tp_Acc`, `Dt`, `Idle`, a WS's set): **Copy as a weapon set** makes one from it |
 | TP or WS gear for a weapon type | `Tp_2h` / `Tp_1h` (and `Ws_`, `Dt_`, `Idle_`...): for a weapon with no set of its own, by its Main ([How sets stack](sets.md#how-sets-stack)) |
 | A Main/Sub/Range pick (`/mw` `/sw` `/rw`) | Nothing: every item in a `Weapon_` set is one. Others go in `gcinclude.SubModes` (etc.) in the file |

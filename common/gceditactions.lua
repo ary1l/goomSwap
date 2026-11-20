@@ -494,8 +494,12 @@ function actionModel.New(context)
     -- The weapon modes: gcinclude.WeaponModes for the loaded job, then the file's other Weapon_<mode> sets.
     local function weapon_modes()
         local out, seen = {}, {}
+        local function gone(m) -- its Weapon_ set is staged for deletion
+            local s = document.model.byLower[string.lower('Weapon_' .. m)]
+            return (s ~= nil) and (s.parentName == nil) and ((document.deleted or {})[s.name] ~= nil)
+        end
         local function add(m)
-            if (type(m) == 'string') and (m ~= 'None') and not seen[string.lower(m)] then
+            if (type(m) == 'string') and (m ~= 'None') and not seen[string.lower(m)] and not gone(m) then
                 seen[string.lower(m)], out[#out + 1] = true, m
             end
         end

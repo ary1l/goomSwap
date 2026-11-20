@@ -612,6 +612,64 @@ local function pending_weapon_mode(set)
     end
 end
 
+-- A Weapon_ set deleted: Save takes its /wm mode out of gcinclude.WeaponModes. For modes: remove, the list's
+-- entries naming them (as written); flags, { list, text } where DefaultWeapons / WeaponRoles still name one (as
+-- staged in Settings, else as the file has them): those are left for you.
+local function mode_report(modes)
+    local doc, out, want = editorState.document, { modes = modes, remove = {}, flags = {} }, {}
+    if #modes == 0 then return out end
+    for _, m in ipairs(modes) do want[string.lower(m)] = true end
+    local staged = doc.jobSettings or {}
+    for _, m in ipairs(setFile.ModeMentions(doc.model.text or '', modes)) do
+        if m.list == 'WeaponModes' then
+            out.remove[#out.remove + 1] = m.text
+        elseif staged[m.list] == nil then
+            out.flags[#out.flags + 1] = m
+        end
+    end
+    for _, list in ipairs({ 'DefaultWeapons', 'WeaponRoles' }) do
+        local e = staged[list]
+        local function scan(v)
+            if type(v) == 'string' then
+                if want[string.lower(v)] then out.flags[#out.flags + 1] = { list = list, text = v } end
+            elseif type(v) == 'table' then
+                for _, x in pairs(v) do scan(x) end
+            end
+        end
+        if (e ~= nil) and not e.remove then scan(e.value) end
+    end
+    return out
+end
+-- The modes of every Weapon_ set staged for deletion (a set inside a set is not a mode).
+local function wm_removal()
+    local doc, cached = editorState.document, editorState.cache.wmRemoval
+    if (cached == nil) or (cached.doc ~= doc) or (cached.revision ~= doc.revision) then
+        local modes = {}
+        for name in pairs(doc.deleted or {}) do
+            local set = doc.model.byName[name]
+            local mode = (set ~= nil) and (set.parentName == nil) and string.match(name, '^Weapon_(.+)$') or nil
+            if mode ~= nil then modes[#modes + 1] = mode end
+        end
+        table.sort(modes)
+        cached = mode_report(modes)
+        cached.doc, cached.revision = doc, doc.revision
+        editorState.cache.wmRemoval = cached
+    end
+    return cached
+end
+ctx.wm_removal = wm_removal
+
+-- Lines for what a Weapon_ deletion does to the /wm cycle (the delete box, the Save review).
+local function draw_mode_report(r)
+    for _, m in ipairs(r.remove) do
+        imgui.TextColored(palette.blue, '/wm ' .. m .. ' comes out of the weapon cycle (gcinclude.WeaponModes).')
+    end
+    for _, f in ipairs(r.flags) do
+        imgui.TextColored(palette.warn, 'gcinclude.' .. f.list .. ' still names ' .. f.text
+            .. ': change it in Settings (Only in ' .. tostring(editorState.document.file) .. ').')
+    end
+end
+
 local function undo_slot(set, slot)
     local edits = editorState.document.edits[set.name]
     if not edits or not edits[slot] then return end
@@ -792,7 +850,7 @@ end
 
 local function draw_delete_confirmation()
     if editorState.ui.requestDeleteSet then
-        editorState.ui.deleteSet = editorState.ui.requestDeleteSet
+        editorState.ui.deleteSet, editorState.ui.deleteReport = editorState.ui.requestDeleteSet, nil
         editorState.ui.requestDeleteSet = nil
         imgui.OpenPopup('##gcedit_delete_set')
     end
@@ -808,6 +866,11 @@ local function draw_delete_confirmation()
             .. ' set' .. ((#children == 1) and '' or 's')) or '') .. ' from the job file?')
         imgui.PushTextWrapPos(440)
         imgui.TextUnformatted('References elsewhere remain. The definition is removed on Save, with a backup.')
+        local mode = (set.parentName == nil) and string.match(set.name, '^Weapon_(.+)$') or nil
+        if (mode ~= nil) and (editorState.ui.deleteReport == nil) then -- read once while the box is open
+            editorState.ui.deleteReport = mode_report({ mode })
+        end
+        if mode ~= nil then draw_mode_report(editorState.ui.deleteReport) end
         imgui.PopTextWrapPos()
         if red_button('Confirm deletion##gcedit') then
             for _, s in ipairs(children) do
@@ -852,6 +915,13 @@ local function draw_save_review()
     imgui.BeginChild('##save_changes', { math.max(260, math.min(760, width - 80)),
         math.max(120, math.min(360, height - 240)) }, CHILD_BORDERS)
     saveReview.Draw(imgui, palette, cached.model)
+    local wm = wm_removal()
+    if (#wm.remove > 0) or (#wm.flags > 0) then
+        imgui.TextColored(palette.blue, 'Weapon cycle removals on Save')
+        imgui.PushTextWrapPos(0)
+        draw_mode_report(wm)
+        imgui.PopTextWrapPos()
+    end
     local staged = editorState.document.jobSettings or {}
     if next(staged) ~= nil then -- Settings: This job
         imgui.TextColored(palette.blue, 'Job file settings')
