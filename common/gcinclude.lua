@@ -23,7 +23,7 @@ else
     gchud = nil
     gcinclude.Err('HUD disabled: gchud.lua failed to load.')
 end
-local gearOk, gearModule = pcall(gFunc.LoadFile, 'common\\gcgear.lua') -- /gcgear and the bar's gear map
+local gearOk, gearModule = pcall(gFunc.LoadFile, 'common\\gcgear.lua') -- /gcgear, the worn-gear grid
 if (gearOk == true) and (type(gearModule) == 'table') then
     gcgear = gearModule
 else
@@ -1956,7 +1956,7 @@ function gcinclude.Help()
         'checks : failing actions cancel, reason in chat',
         'gear   : /autogear [on|off|regen N|refresh N|dt N|petdt N], /gcbuild [JOB] (the example with your gear, as <JOB>.proposed.lua), /gcedit [set] (set editor window, Ashita)',
         'bar    : /gcbar [on|off|pos x y|reset|scale N|theme name]',
-        'grid   : /gcgear [on|off|map on|off|pos x y|reset|scale N] (worn gear 4x4: locks, holds, RP; bar map)',
+        'grid   : /gcgear [on|off|pos x y|reset|scale N|alpha N|bg on|off] (worn gear 4x4: locks, holds, RP)',
         'on/off : every toggle takes on|off (no arg flips it); /def off|dt|mdt|aminon',
         'nuke   : Burst set is automatic on a nuke landing in a live skillchain; /burst = Burst set on every nuke (HUD: * on the nuke cell)',
         'keys   : F7 wm, Shift+F7 wm default, F9 mset, Ctrl+F9 tankset, Alt+F9 wsset, F10 def, Alt+F10 kite,',
