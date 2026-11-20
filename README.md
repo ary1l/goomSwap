@@ -69,7 +69,7 @@ picks it (F7 cycles). While it is on, its own sets go over their base: `Tp_<Name
 
 After the reload it is in `/wm` (`/wm mpu`, F7) and on the bar: the weapon pill and its right-click menu, and that
 box's line in the other boxes' HUD (they read it within a second). The pill takes the colour of the mode's Main
-(else Range, else Sub): Mpu Gandring is prime, purple; `WeaponClass` adds your own. For another name to type,
+(else Range, else Sub): Mpu Gandring is prime, purple; `WeaponClass` adds your own. To type a different name,
 `HUDAbbr = { ['Mpu'] = 'gand' }` in char.lua's settings (`/wm gand`).
 
 **Remove one** (example: a PLD dropping its Malignance Sword mode):
