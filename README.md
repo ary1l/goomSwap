@@ -42,6 +42,39 @@ For **Ashita v4** (LuAshitacast). Start from an example job file and the in-game
    by default (`EditorBackupKeep = 0` keeps all). Other job files use **Save file** without changing your active job.
 5. Run `/checksets`; use **What you actually wore** in the editor to inspect an action.
 
+## Weapon modes
+
+A weapon mode is a `Weapon_<Name>` set (Main, Sub, any of Range/Ammo) listed in `gcinclude.WeaponModes`; `/wm <name>`
+picks it (F7 cycles). While it is on, its own sets go over their base: `Tp_<Name>` over `Tp_Default`, `Ws_<Name>`,
+`Savage Blade_<Name>`, `Idle_<Name>`, `Dt_<Name>`... `Weapon_<Name>_1h` is worn instead when you can't dual wield,
+`Weapon_<Name>Acc` (or `Weapon_<Name>_Acc`) with `/mset acc`. All of it is done in `/gcedit`.
+
+**Add one** (Goomy, RDM, gets Mpu Gandring):
+
+1. On Goomy, `/gcedit`. For another job's file, click the file name in the top bar.
+2. **+ New set**, name it `Weapon_Mpu` (one word, no spaces or `_`: `/wm mpu`), **Create**.
+3. **Weapon sets for /wm Mpu** opens. Tick the sets whose gear should differ with Mpu (`Tp_Mpu`, `Ws_Mpu`, a weapon
+   skill's set...) and **Make**. They start empty: fill only what differs, and later changes to the base still apply.
+4. Fill `Weapon_Mpu`: Main Mpu Gandring, Sub your offhand.
+5. **Weapon sets...** (over the slots) again: tick `Weapon_Mpu_1h`, `Weapon_Mpu_Acc`... (spelled like your file's,
+   `Weapon_MpuAcc` if it joins them) and **Make**. They start as copies of `Weapon_Mpu`; change their Sub.
+6. Optional: right-click `Weapon_Mpu`, **/wm order**, to place it in the cycle; **Settings**, **DefaultWeapons**, to
+   start in it.
+7. **Save + reload** (another job's file: **Save file**). The review lists the new `/wm` mode.
+
+**Remove one** (Jirachi, PLD, drops its Malignance Sword mode):
+
+1. Right-click `Weapon_Malignance`, **Delete set...**. The box shows:
+   - `/wm Malignance` coming out of `gcinclude.WeaponModes`;
+   - **Also delete the N sets worn only with /wm Malignance**, ticked (`Weapon_Malignance_1h`, `Tp_Malignance`...);
+     untick to keep them. Sets your job file's code names are kept and listed;
+   - in orange, `DefaultWeapons` / `WeaponRoles` still naming it: change those in **Settings**.
+2. **Confirm deletion**, then **Save + reload**.
+
+To swap one weapon for another instead, **Rename set...** (`Weapon_Malignance` to `Weapon_<New>`) renames the mode
+everywhere the file names it (the mode lists, `DefaultWeapons`, code) and, ticked, its `Weapon_Malignance_...` sets;
+rename its other sets (`Tp_Malignance`, `Weapon_MalignanceAcc`) yourself.
+
 ## Common commands
 
 | Command | Purpose |
