@@ -25,6 +25,7 @@ HUD). Click a line to drive that box.
 | Weapon | the weapon mode, coloured by its weapon (below); `+` = a slot pick (`/mw` `/sw` `/rw` `/ammoset`) changed |
 | Modes | `melee` `ws` `idle` `nuke` `tank` `pup` `hoxne`...; blank = that job has no such mode |
 | `def`, toggles | `def` (DT / MDT / Aminon), `sir` `th` `kite` `proc`, the job's own (`burst`, `harp`, `lock`...) |
+| Gear map | yours only: your 16 slots as tiny squares ([gear grid](#gear-grid-gcgear)); hover it for the grid |
 
 - **Pills:** set or on = coloured outline, tint and dot, showing the value (`acc`, `mp`, `dt`); default or off =
   dashed grey and a ring, showing its name (`melee`, `idle`, `sir`).
@@ -61,3 +62,32 @@ The weapon's class comes from the mode's Main, else Range, else Sub; add your ow
 - **Drop:** opens on hover; in the screen's bottom half the lines rise above the bar. The box with it on also prints
   the other boxes' chat lines as `[Name]`.
 - `/gchud debug` lists what it reads.
+
+## Gear grid (`/gcgear`)
+
+What you have on, 4x4 in the equipment window's order (Main Sub Range Ammo / Head Neck Ear1 Ear2 / Body Hands Ring1
+Ring2 / Back Waist Legs Feet), drawn like atom0s' equipmon: the game's item icons, the ammo count, a red X on a slot
+the game has encumbered (Salvage...). On top of that, each slot says what keeps it:
+
+| Mark | Means |
+|---|---|
+| Red border | your `/lock` |
+| Amber border | held to keep your TP (`WeaponTPGuard`) or Aftermath (`AftermathHold`): Main, Sub, Range |
+| Purple border | Aminon, Hoxne, `/proc`, an item use (`/gce`, `/warpring`...) or a hold (`/capacity` `/jubilee` `/dynamisrp` `/abyproc`) |
+| Pink corner | still needs RP (rank below its cap) |
+| Red X | encumbered: the game has locked the slot |
+
+**Hover** a slot: the item (and its rank), the set that put it on (`From Tp_Default (Engaged)`; `Last swap asked for
+...` when what you wear isn't what GoomSwap's last swap named, e.g. a locked slot), and every lock or hold on it with
+the command that frees it.
+
+- **Window:** `/gcgear` (off at first). Bare like equipmon without its backgrounds: icons only, 1px apart. Drag it
+  anywhere (saved per character); hidden with the game's interface, as the bar is.
+- **Look:** `/gcgear scale 0.5`–`3`, `/gcgear alpha 0.2`–`1` (the icons' opacity; the marks stay solid),
+  `/gcgear bg on` (the bar's panel behind it), `/gcgear reset` (first spot, scale and alpha 1). Saved per character.
+- **The bar's map:** the same 16 slots at the end of your line, one square each: dark empty, light worn, coloured as
+  the marks above (red also for encumbered, pink needs RP). Hover it: the grid, that slot outlined, its hover text.
+  `/gcgear map off` hides it.
+- **Colours** follow the bar's colour preset (`Theme`, goomui's), kept apart from each other.
+- Replaces equipmon: unload it (`/addon unload equipmon`) once this is placed.
+

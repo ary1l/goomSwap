@@ -5,15 +5,17 @@
 -- map (gcgear.DrawMap); hovered, it shows this grid. Colours: the bar's colour preset (gcdisplay.Theme).
 local gcgear = {}
 
+local imgui = require('imgui')
 local ffi = require('ffi')
 local okD3d, d3d8 = pcall(require, 'd3d8')
 if not okD3d then d3d8 = nil end
 
 local inc, disp = nil, nil -- gcinclude, gcdisplay (Bind)
 
--- Saved per character in config\addons\luashitacast\gcbar\<Name>_gear.txt as "x,y,on,scale,map" (x,y 'auto' until
--- dragged). The window starts off; the bar's map starts on.
-local cfg = { on = false, map = true, x = nil, y = nil, scale = 1 }
+-- Saved per character in config\addons\luashitacast\gcbar\<Name>_gear.txt as "x,y,on,scale,map,alpha,bg" (x,y
+-- 'auto' until dragged). The window starts off and bare (bg off: icons only, as equipmon without its backgrounds);
+-- alpha: the icons' opacity (the marks stay solid). The bar's map starts on.
+local cfg = { on = false, map = true, x = nil, y = nil, scale = 1, alpha = 1, bg = false }
 local placed, savedX, savedY = false, nil, nil -- the window put where cfg says (again after pos, reset or scale)
 
 -- The game's equipment slots (0 Main .. 15 Back; LAC's slot numbers are these + 1), in the equipment window's order.
@@ -46,6 +48,7 @@ local COL_BG, COL_EDGE = { 0.04, 0.045, 0.06, 0.70 }, { 1.0, 1.0, 1.0, 0.10 }
 local COL_TIP_BG = { 0.04, 0.045, 0.06, 0.94 }
 local COL_HEAD, COL_KEY, COL_DIM = { 0.93, 0.93, 0.96, 1.0 }, { 0.62, 0.68, 0.80, 1.0 }, { 0.55, 0.55, 0.61, 0.90 }
 local SOCKET = { 0.27, 0.32, 0.41, 0.55 } -- a slot's square; on the map, an empty slot
+local SOCKET_BARE = { 0.27, 0.32, 0.41, 0.22 } -- the bare window: an empty slot only
 local WORN = { 0.62, 0.66, 0.74, 0.85 } -- the map: gear on, nothing holding it
 local SHADE, OUTLINE, WHITE = { 0, 0, 0, 0.45 }, { 0, 0, 0, 0.90 }, { 1, 1, 1, 1 }
 local MEANINGS = { 'lock', 'hold', 'feature', 'rp' }
@@ -161,8 +164,8 @@ local function holder(slot)
     if (inc.HeldSlots[slot] ~= nil) then return 'hold' end
     return nil
 end
-local OWNER_TEXT = { user = '/lock', aminon = 'Aminon', hoxne = 'Hoxne', proc = '/proc',
-    enchant = 'an item use (/gce)' }
+local OWNER_TEXT = { user = '/lock', aminon = 'Aminon', hoxne = 'Hoxne', proc = '/proc', enchant = 'item use, /gce' }
+local OWNER_OFF = { enchant = '/gce cancel' } -- else gcinclude.LockOwnerFix
 local function owner_text(o)
     local key = string.match(o, '^hold:(.+)$')
     return OWNER_TEXT[o] or ((key ~= nil) and ('/' .. key)) or o
@@ -207,7 +210,8 @@ local function details(c)
     end
     if (inc ~= nil) then
         for o in pairs(inc.LockedSlots[c.slot] or {}) do
-            line('Locked: ' .. owner_text(o) .. ' (' .. tostring(inc.LockOwnerFix(o, c.slot)) .. ')',
+            line('Locked: ' .. owner_text(o) .. ' (off: ' .. (OWNER_OFF[o] or tostring(inc.LockOwnerFix(o, c.slot)))
+                .. ')',
                 (o == 'user') and COL.lock or COL.feature)
         end
         if (inc.HeldSlots[c.slot] ~= nil) then
@@ -256,32 +260,43 @@ local function marks(dl, c, x, y, cell, hot)
     if hot then dl:AddRect(va(x, y), vb(x2, y2), u32(WHITE), 3, 0, 1) end
 end
 
--- The 4x4 grid at the cursor; hot: a slot to outline (the map's hovered one). Returns the hovered slot's cell.
-local function grid_body(cell, gap, hot)
+-- An icon at alpha (ImGui's Image takes no tint here: the style's Alpha fades it, popped before the marks).
+local function image(id, cell, alpha)
+    if (alpha >= 1) or (ImGuiStyleVar_Alpha == nil) then imgui.Image(id, size(cell, cell)); return end
+    imgui.PushStyleVar(ImGuiStyleVar_Alpha, alpha)
+    local ok, why = pcall(imgui.Image, id, size(cell, cell))
+    imgui.PopStyleVar()
+    if not ok then error(why, 0) end
+end
+-- The 4x4 grid at the cursor; hot: a slot to outline (the map's hovered one); alpha: the icons'; bare: no square
+-- behind a worn slot. Returns the hovered slot's cell.
+local function grid_body(cell, gap, hot, alpha, bare)
     budget = ICONS_PER_FRAME
     local dl, hovered = imgui.GetWindowDrawList(), nil
     for i, c in ipairs(cells) do
         if (((i - 1) % 4) ~= 0) then imgui.SameLine(0, gap) end
         local x, y = xy(imgui.GetCursorScreenPos())
-        if (x ~= nil) then dl:AddRectFilled(va(x, y), vb(x + cell, y + cell), u32(SOCKET), 3) end
+        if (x ~= nil) and ((not bare) or (c.id == 0)) then
+            dl:AddRectFilled(va(x, y), vb(x + cell, y + cell), u32(bare and SOCKET_BARE or SOCKET), 3)
+        end
         local t = icon(c.id)
-        if (t ~= nil) then imgui.Image(t.id, size(cell, cell)) else imgui.Dummy(size(cell, cell)) end
+        if (t ~= nil) then image(t.id, cell, alpha) else imgui.Dummy(size(cell, cell)) end
         if (hot == nil) and imgui.IsItemHovered() then hovered = c end
         if (x ~= nil) then marks(dl, c, x, y, cell, hot == i) end
     end
     return hovered
 end
-local function grid(cell, gap, hot)
+local function grid(cell, gap, hot, alpha, bare)
     poll()
     colours()
     imgui.PushStyleVar(ImGuiStyleVar_ItemSpacing, va(gap, gap))
-    local ok, r = pcall(grid_body, cell, gap, hot) -- an error must not skip the Pop
+    local ok, r = pcall(grid_body, cell, gap, hot, alpha or 1, bare) -- an error must not skip the Pop
     imgui.PopStyleVar()
     if not ok then error(r, 0) end
     return r
 end
-local function sizes(scale)
-    return math.floor(32 * scale + 0.5), math.max(1, math.floor(2 * scale + 0.5))
+local function sizes(scale) -- a slot (32px at scale 1, as the game's icons) and the gap between slots
+    return math.floor(32 * scale + 0.5), math.max(1, math.floor(scale + 0.5))
 end
 
 local TIP_PAD = { 8, 5 } -- the bar's hover text
@@ -302,7 +317,7 @@ end
 -- width. Hovered: the grid, that slot outlined, and its hover text.
 local function map_tip(hot)
     local cell, gap = sizes(cfg.scale)
-    grid(cell, gap, hot)
+    grid(cell, gap, hot, 1, false)
     if (hot ~= nil) then details(cells[hot]) end
     if not cfg.on then line('/gcgear: as a window', COL_DIM) end
 end
@@ -362,8 +377,8 @@ local function save_cfg()
     local f = io.open(dir .. file, 'w')
     if (f == nil) then return end
     local function n(v) return (tonumber(v) ~= nil) and string.format('%d', v) or 'auto' end
-    f:write(string.format('%s,%s,%s,%s,%s', n(cfg.x), n(cfg.y), cfg.on and 'on' or 'off', tostring(cfg.scale),
-        cfg.map and 'on' or 'off'))
+    f:write(string.format('%s,%s,%s,%s,%s,%s,%s', n(cfg.x), n(cfg.y), cfg.on and 'on' or 'off', tostring(cfg.scale),
+        cfg.map and 'on' or 'off', tostring(cfg.alpha), cfg.bg and 'on' or 'off'))
     f:close()
 end
 local function load_cfg()
@@ -375,6 +390,9 @@ local function load_cfg()
     f:close()
     local x, y, on, scale, map = string.match(text, '^(%-?%w+),(%-?%w+),(%a+),([%d%.]+),(%a+)')
     if (x == nil) then return end
+    local alpha, bg = string.match(text, '^[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,([%d%.]+),(%a+)')
+    cfg.alpha = math.max(0.2, math.min(1, tonumber(alpha) or 1))
+    cfg.bg = (bg == 'on')
     cfg.x, cfg.y = tonumber(x), tonumber(y)
     if (cfg.x == nil) or (cfg.y == nil) then cfg.x, cfg.y = nil, nil end
     cfg.on, cfg.map = (on == 'on'), (map ~= 'off')
@@ -383,9 +401,9 @@ end
 
 -- The window: no title bar, dragged anywhere; where it is let go is saved. Hidden with the game's interface, as the
 -- bar is (gcdisplay.UiHidden).
-local PAD, FLAGS = { 4, 4 }, nil
+local PAD, NO_PAD, CLEAR, FLAGS = { 4, 4 }, { 0, 0 }, { 0, 0, 0, 0 }, nil
 local function window_body(cell, gap)
-    local c = grid(cell, gap, nil)
+    local c = grid(cell, gap, nil, cfg.alpha, not cfg.bg)
     if (c ~= nil) then tooltip(details, c) end
     local x, y = xy(imgui.GetWindowPos())
     if (x ~= nil) and (y ~= nil) and not imgui.IsMouseDown(0) then
@@ -417,10 +435,10 @@ local function render()
         FLAGS = bit.bor(ImGuiWindowFlags_AlwaysAutoResize, ImGuiWindowFlags_NoFocusOnAppearing,
             ImGuiWindowFlags_NoTitleBar, ImGuiWindowFlags_NoScrollbar, ImGuiWindowFlags_NoResize)
     end
-    imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, PAD)
+    imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, cfg.bg and PAD or NO_PAD)
     imgui.PushStyleVar(ImGuiStyleVar_WindowRounding, 6)
-    imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1)
-    imgui.PushStyleColor(ImGuiCol_WindowBg, COL_BG)
+    imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, cfg.bg and 1 or 0)
+    imgui.PushStyleColor(ImGuiCol_WindowBg, cfg.bg and COL_BG or CLEAR)
     imgui.PushStyleColor(ImGuiCol_Border, COL_EDGE)
     local ok, why = true, nil
     if imgui.Begin('GoomSwap gear##gcgear', true, FLAGS) then ok, why = pcall(window_body, cell, gap) end
@@ -459,7 +477,7 @@ function gcgear.Stop()
     textures = {}
 end
 
--- /gcgear [on|off] | map [on|off] | pos x y | reset | scale N
+-- /gcgear [on|off] | map [on|off] | pos x y | reset | scale N | alpha N | bg [on|off]
 function gcgear.HandleCommand(args)
     local arg = (args[2] ~= nil) and string.lower(args[2]) or nil
     if (arg == 'map') then
@@ -476,9 +494,28 @@ function gcgear.HandleCommand(args)
         save_cfg()
         return
     elseif (arg == 'reset') then -- back to the first spot and size
-        cfg.x, cfg.y, cfg.scale, placed = nil, nil, 1, false
+        cfg.x, cfg.y, cfg.scale, cfg.alpha, placed = nil, nil, 1, 1, false
         save_cfg()
-        inc.Say('Gear grid: first spot, scale 1')
+        inc.Say('Gear grid: first spot, scale 1, alpha 1')
+        return
+    elseif (arg == 'alpha') then -- the icons' opacity, 0.2-1 (equipmon's Opacity)
+        local n = tonumber(args[3])
+        if (n == nil) then
+            inc.Say('Gear grid icon alpha: ' .. tostring(cfg.alpha) .. ' (/gcgear alpha 0.2-1)')
+            return
+        end
+        cfg.alpha = math.max(0.2, math.min(1, n))
+        save_cfg()
+        inc.Say('Gear grid icon alpha: ' .. tostring(cfg.alpha))
+        return
+    elseif (arg == 'bg') then -- the window's background panel
+        local v = (args[3] ~= nil) and string.lower(args[3]) or nil
+        if (v == 'on') then cfg.bg = true
+        elseif (v == 'off') then cfg.bg = false
+        elseif (v == nil) then cfg.bg = not cfg.bg
+        else inc.Err('usage: /gcgear bg [on|off]'); return end
+        save_cfg()
+        inc.Say('Gear grid background: ' .. (cfg.bg and 'On' or 'Off'))
         return
     elseif (arg == 'scale') then
         local n = tonumber(args[3])
@@ -492,7 +529,7 @@ function gcgear.HandleCommand(args)
     elseif (arg == 'off') then cfg.on = false
     elseif (arg == nil) then cfg.on = not cfg.on
     else
-        inc.Err('usage: /gcgear [on|off|map on|off|pos x y|reset|scale N]')
+        inc.Err('usage: /gcgear [on|off|map on|off|pos x y|reset|scale N|alpha N|bg on|off]')
         return
     end
     save_cfg()

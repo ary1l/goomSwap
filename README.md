@@ -13,6 +13,8 @@ For **Ashita v4** (LuAshitacast). Start from an example job file and the in-game
 - Precast/midcast layers, TH, spell-element gear, magic burst, Moonshade and action safety checks.
 - Bellhop packer (asks only for what's missing and reachable; never twice across reloads).
 - `/gcbar` status bar and `/gchud` multibox controls; colours follow goomui's preset.
+- `/gcgear` worn-gear grid (equipmon-style icons, ammo, encumbrance) marking `/lock`, TP holds, Aminon/Hoxne and gear
+  that needs RP; hover a slot for the set that put it on. The bar carries a small map of it.
 - `/gcbuild` to draft a job file from carried gear; `/gcedit` to browse the character's job files, inspect gear,
   fill and compare inherited gear/stat totals, keep item details visible, and resize panels;
   arrange, hide and sort its headings, copy sets to other jobs, find an item in every job file, and edit
@@ -99,7 +101,7 @@ rename its other sets (`Tp_Malignance`, `Weapon_MalignanceAcc`) yourself.
 | `/th` `/sir` `/kite` | Treasure Hunter, spell interruption resistance, movement gear |
 | `/idleset [mode]` | Idle set mode |
 | `/lock [slots]` `/unlock` | Hold equipment slots |
-| `/gcbar` `/gchud` | Status bar and multibox HUD |
+| `/gcbar` `/gchud` `/gcgear` | Status bar, multibox HUD, worn-gear grid |
 | `/checksets` | Validate sets |
 | `/gcbuild` `/gcedit [set]` | Build or edit job sets |
 | `/gchelp` | In-game command help |
@@ -122,4 +124,4 @@ See [all commands and keys](docs/commands.md).
 - **A slot will not change:** `/unlock`; check TP and Aftermath weapon holds.
 - **A set is empty or gear is missing:** run `/checksets` and inspect the set in `/gcedit`.
 - **An action is cancelled:** read the reason in chat; the editor's Result shows the gear path.
-- **Bar or HUD is hidden:** `/gcbar on`, `/gchud on`, or `/gcbar reset`.
+- **Bar or HUD is hidden:** `/gcbar on`, `/gchud on`, or `/gcbar reset`; the gear grid: `/gcgear on`, `/gcgear reset`.
