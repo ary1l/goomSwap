@@ -2713,7 +2713,7 @@ function gcinclude.EditorCommand(setName, slot)
     if not loadEditor() then return end
     if gcinclude.Editor.IsOpen() then
         -- open: /gcedit asks before dropping unsaved changes; /gcedit <set> goes to that set, keeping them
-        if (setName == nil) then gcinclude.Editor.RequestClose() else gcinclude.Editor.Show(setName) end
+        if (setName == nil) then gcinclude.Editor.RequestClose() else gcinclude.Editor.Show(setName, slot) end
         return
     end
     gcinclude.Editor.Open(gcinclude, setName, slot)

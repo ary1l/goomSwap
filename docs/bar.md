@@ -75,10 +75,15 @@ the game has encumbered (Salvage...). On top of that, each slot says what keeps 
 | Purple border | Aminon, Hoxne, `/proc`, an item use (`/gce`, `/warpring`...) or a hold (`/capacity` `/jubilee` `/dynamisrp` `/abyproc`) |
 | Pink corner | still needs RP (rank below its cap) |
 | Red X | encumbered: the game has locked the slot |
+| Orange `!` | a swap that didn't go on: GoomSwap's last swap named another item, nothing holds the slot, still not on 2s later |
 
 **Hover** a slot: the item (and its rank), the set that put it on (`From Tp_Default (Engaged)`; `Last swap asked for
 ...` when what you wear isn't what GoomSwap's last swap named, e.g. a locked slot), and every lock or hold on it with
-the command that frees it.
+the command that frees it. With a `!`, why that item isn't on: not in your bags, in a bag you can't equip from (Safe,
+Storage...; LAC's `EquipBags`), your job can't wear it, or it needs a higher level.
+
+**Right-click** a slot: `/gcedit` on the set that put it on (or asked for it), that slot selected. **Ctrl+click**:
+`/lock` that slot, again to `/unlock` it.
 
 - **Window:** `/gcgear` (off at first). Bare like equipmon without its backgrounds: icons only, 1px apart. Drag it
   anywhere (saved per character); hidden with the game's interface, as the bar is.

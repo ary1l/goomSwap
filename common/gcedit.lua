@@ -2091,14 +2091,14 @@ function gcedit.RequestClose()
 end
 
 -- /gcedit <set> while open: go to that set, keeping the changes.
-function gcedit.Show(setName)
+function gcedit.Show(setName, slot) -- slot: select it too (the /gcgear right-click)
     if (not editorState.open) or (setName == nil) then return end
     local hit = editorState.document.model.byLower[string.lower(setName)]
     if hit == nil then
         gearEngine.Say('/gcedit: no set named ' .. setName .. ' in ' .. editorState.document.file)
         return
     end
-    go_to(hit.name, nil, 'action')
+    go_to(hit.name, slot, 'action')
 end
 
 function gcedit.Close()
