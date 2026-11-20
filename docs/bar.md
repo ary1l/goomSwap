@@ -25,7 +25,6 @@ HUD). Click a line to drive that box.
 | Weapon | the weapon mode, coloured by its weapon (below); `+` = a slot pick (`/mw` `/sw` `/rw` `/ammoset`) changed |
 | Modes | `melee` `ws` `idle` `nuke` `tank` `pup` `hoxne`...; blank = that job has no such mode |
 | `def`, toggles | `def` (DT / MDT / Aminon), `sir` `th` `kite` `proc`, the job's own (`burst`, `harp`, `lock`...) |
-| Gear map | yours only: your 16 slots as tiny squares ([gear grid](#gear-grid-gcgear)); hover it for the grid |
 
 - **Pills:** set or on = coloured outline, tint and dot, showing the value (`acc`, `mp`, `dt`); default or off =
   dashed grey and a ring, showing its name (`melee`, `idle`, `sir`).
@@ -85,9 +84,6 @@ the command that frees it.
   anywhere (saved per character); hidden with the game's interface, as the bar is.
 - **Look:** `/gcgear scale 0.5`–`3`, `/gcgear alpha 0.2`–`1` (the icons' opacity; the marks stay solid),
   `/gcgear bg on` (the bar's panel behind it), `/gcgear reset` (first spot, scale and alpha 1). Saved per character.
-- **The bar's map:** the same 16 slots at the end of your line, one square each: dark empty, light worn, coloured as
-  the marks above (red also for encumbered, pink needs RP). Hover it: the grid, that slot outlined, its hover text.
-  `/gcgear map off` hides it.
 - **Colours** follow the bar's colour preset (`Theme`, goomui's), kept apart from each other.
 - Replaces equipmon: unload it (`/addon unload equipmon`) once this is placed.
 

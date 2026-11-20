@@ -14,7 +14,7 @@ For **Ashita v4** (LuAshitacast). Start from an example job file and the in-game
 - Bellhop packer (asks only for what's missing and reachable; never twice across reloads).
 - `/gcbar` status bar and `/gchud` multibox controls; colours follow goomui's preset.
 - `/gcgear` worn-gear grid (equipmon-style icons, ammo, encumbrance) marking `/lock`, TP holds, Aminon/Hoxne and gear
-  that needs RP; hover a slot for the set that put it on. The bar carries a small map of it.
+  that needs RP; hover a slot for the set that put it on.
 - `/gcbuild` to draft a job file from carried gear; `/gcedit` to browse the character's job files, inspect gear,
   fill and compare inherited gear/stat totals, keep item details visible, and resize panels;
   arrange, hide and sort its headings, copy sets to other jobs, find an item in every job file, and edit

@@ -496,8 +496,6 @@ local TIP_NAME = { Weapons = 'Weapon mode', Main = 'Main pick', Sub = 'Sub pick'
 local menuLists = { until_ = 0 } -- that box's lists, as last read
 local barH = nil -- the bar's own height (its line alone), measured while the drop is shut
 function gcdisplay.SetHud(h) hud = h end
-local gear = nil -- gcgear: the gear map at the end of this box's line
-function gcdisplay.SetGear(g) gear = g end
 local LINE_COLS = { 'wpn', 'Main', 'Sub', 'Range', 'Ammo', 'MeleeSet', 'WsSet', 'IdleSet', 'NukeSet', 'Weapon',
     'TankSet', 'PupMode', 'Hoxne', '|', 'Def', 'SIR', 'TH', 'Kite', 'PROC', 'Burst', 'Death', 'String', 'SongLock' }
 -- One line's pills by column. cyc(k): value, still at its load default; vals(k): every value (own box only, for
@@ -653,8 +651,6 @@ local function columns(lines)
     for _, id in ipairs(LINE_COLS) do
         if (id == '|') then divider() elseif (own[id] ~= nil) then add(id) end
     end
-    cols.ownLast = #cols -- this box's last pill: its line draws no divider after it while the gear map is there
-    if (cols[#cols].id == '|') then cols.ownLast = #cols - 1 end
     local extra = false
     for _, id in ipairs(LINE_COLS) do
         if (id ~= '|') and (own[id] == nil) then
@@ -745,9 +741,9 @@ end
 local function cells(line, cols, name, id)
     local dl, lh, wx = B.dl, B.lh, B.wx
     local _, top = xy(imgui.GetCursorScreenPos()) -- this line's top (after an item the cursor moves on)
-    for ci, c in ipairs(cols) do
+    for _, c in ipairs(cols) do
         if (c.id == '|') then
-            if (wx ~= nil) and (top ~= nil) and ((id ~= 'me') or not B.mapOn or (ci < (cols.ownLast or ci + 1))) then
+            if (wx ~= nil) and (top ~= nil) then
                 dl:AddLine(va(wx + c.x, top + 1), vb(wx + c.x, top + lh - 1), imgui.GetColorU32(COL_DIV), 1)
             end
         else
@@ -788,14 +784,7 @@ local function own_row(L)
     put('Atk ', COL_KEY, 13); put(tostring(Attk), COL_HEAD, 0); hold(tostring(Attk), '0000')
     put('Def ', COL_KEY, 8); put(tostring(Def), COL_HEAD, 0); hold(tostring(Def), '0000')
     leadW[''] = lead_end()
-    B.mapOn = (gear ~= nil) and gear.MapOn()
     cells(L.lines[1], L.cols, nil, 'me')
-    if B.mapOn then -- the gear map (/gcgear), after the last pill
-        imgui.SameLine(0, SEG * B.s)
-        local x = xy(imgui.GetCursorScreenPos())
-        local w = gear.DrawMap(B.lh)
-        if (x ~= nil) and (B.wx ~= nil) and (w ~= nil) then B.endX = math.max(B.endX or 0, x - B.wx + w) end
-    end
 end
 local function alt_row(L, drop, i)
     local r = drop[i]
