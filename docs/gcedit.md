@@ -154,7 +154,7 @@ a job file's own setting still wins. Details: [Settings](settings.md).
 - **Result** shows what an action wore, layer by layer: recorded since load, or expected from your sets and modes.
 - **Related** lists the sets and modes for this action; **Make** stages a missing one.
 - **To fill** lists placeholders, missing or unusable items and empty weapon modes; **Fill all** stages one choice
-  for every listed use. When nothing is left, Goomy says so.
+  for every listed use. When nothing is left, it says **Nothing left to fill.**
 
 ## Save
 
