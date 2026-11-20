@@ -493,7 +493,18 @@ function actionModel.New(context)
     end
     local HANDS = { ['2h'] = 'a two-handed weapon', ['1h'] = 'a one-handed weapon' }
     -- The weapon modes: gcinclude.WeaponModes for the loaded job, then the file's other Weapon_<mode> sets.
+    -- worked out once per edit (the editor's menus and headers ask every frame); a copy each time: callers add to it
+    local modesMemo = nil
     local function weapon_modes()
+        local p = context.getPlayer()
+        local live = ((gearEngine ~= nil) and (type(gearEngine.WeaponModes) == 'table') and (p ~= nil)
+            and (context.job == p:GetMainJob())) and gearEngine.WeaponModes or nil
+        if (modesMemo ~= nil) and (modesMemo.rev == document.revision) and (modesMemo.live == live)
+            and (modesMemo.n == #(document.newModes or {})) then
+            local copy = {}
+            for i, m in ipairs(modesMemo.list) do copy[i] = m end
+            return copy
+        end
         local out, seen = {}, {}
         local function gone(m) -- its Weapon_ set is staged for deletion
             local s = document.model.byLower[string.lower('Weapon_' .. m)]
@@ -504,11 +515,7 @@ function actionModel.New(context)
                 seen[string.lower(m)], out[#out + 1] = true, m
             end
         end
-        local p = context.getPlayer()
-        if (gearEngine ~= nil) and (type(gearEngine.WeaponModes) == 'table') and (p ~= nil)
-            and (context.job == p:GetMainJob()) then
-            for _, m in ipairs(gearEngine.WeaponModes) do add(m) end
-        end
+        for _, m in ipairs(live or {}) do add(m) end
         -- the file's Weapon_<mode> sets; not one that is another's own (Weapon_MpuAcc: Mpu with /mset Acc)
         local cands, msets = {}, setFile.MeleeModes(document.model.text, document.newModes)
         for _, s in ipairs(document.model.list) do cands[#cands + 1] = string.match(s.name, '^Weapon_([^_]+)$') end
@@ -521,7 +528,10 @@ function actionModel.New(context)
             end
             if not own then add(m) end
         end
-        return out
+        modesMemo = { rev = document.revision, live = live, n = #(document.newModes or {}), list = out }
+        local copy = {}
+        for i, m in ipairs(out) do copy[i] = m end
+        return copy
     end
     -- name split at its first _ whose left part is an action (Savage Blade_Naegling_Acc: Savage Blade,
     -- Naegling_Acc). nil when no part is.
@@ -689,7 +699,34 @@ function actionModel.New(context)
     end
 
     -- A plain-language summary for the set header. The order and overwrite details remain in Equipped result.
+    -- A /wm mode's weapon set (gcruntime modeSet / WeaponSetFor): Weapon_<mode>, else its own variant (_1h when you
+    -- can't dual wield, <mset> or _<mset> with that /mset mode, both). Its description and short label, else nil.
+    local function weapon_set_when(set)
+        local rest = (set.parentName == nil) and string.match(set.name, '^Weapon_(.+)$') or nil
+        if rest == nil then return nil end
+        local msets = setFile.MeleeModes(document.model.text, document.newModes)
+        for _, m in ipairs(weapon_modes()) do
+            local lm, lr = string.lower(m), string.lower(rest)
+            if lr == lm then
+                return 'While /wm ' .. m .. ' is on: the weapons it names are the ones you wear and go back to (an action '
+                    .. 'set that names a weapon still swaps it). Its own sets take its place: Weapon_' .. m .. '_1h when '
+                    .. 'you can\'t dual wield, Weapon_' .. m .. '<mset> with an /mset mode.', '/wm ' .. m
+            end
+            if setFile.WeaponVariantOf(set.name, m, msets) then
+                local oneHand = string.match(lr, '_1h$') ~= nil
+                local ms = string.gsub(string.gsub(string.sub(rest, #m + 1), '_1h$', ''), '^_', '')
+                local cond = ((ms ~= '') and (' with /mset ' .. ms) or '')
+                    .. (oneHand and ((ms ~= '') and ',' or '') .. " when you can't dual wield" or '')
+                return '/wm ' .. m .. cond .. ': worn in place of Weapon_' .. m .. ', so its weapons are the ones you wear '
+                    .. 'and go back to.', '/wm ' .. m .. cond
+            end
+        end
+        return nil
+    end
+
     local function when_description(set)
+        local wtext, wshort = weapon_set_when(set)
+        if wtext ~= nil then return wtext, wshort end
         local a = action_for(set, modes_now())
         if a == nil then
             return 'No built-in trigger was found. This set is worn only if your job file explicitly equips or combines it; inspect its Handle functions.'

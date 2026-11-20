@@ -188,8 +188,16 @@ local function is_unused(set)
     return set.unused
 end
 
+-- Search: a set's name, else an item it names (nyame: every set wearing a Nyame piece), as edited.
+local function names_item(set, query)
+    for _, slot in ipairs(SCREEN) do
+        local v = current(set, slot)
+        if (v ~= nil) and (v.name ~= nil) and string.find(string.lower(v.name), query, 1, true) then return true end
+    end
+    return false
+end
 local function matches_set(set, query)
-    if query ~= '' and not string.find(set.lname, query, 1, true) then return false end
+    if (query ~= '') and not string.find(set.lname, query, 1, true) and not names_item(set, query) then return false end
     local ui, status = editorState.ui, set_status(set)
     return (not ui.issuesOnly[1] or has_issue(set))
         and (not ui.editedOnly[1] or status.edited)
@@ -418,8 +426,9 @@ local function draw_sets()
     draw_new_popup()
     imgui.SameLine()
     imgui.PushItemWidth(-1)
-    imgui.InputTextWithHint('##gcedit_find', 'Savage, Idle...', editorState.ui.find, 48)
+    imgui.InputTextWithHint('##gcedit_find', 'Idle, Nyame...', editorState.ui.find, 48)
     imgui.PopItemWidth()
+    if imgui.IsItemHovered() then set_tip('A set\'s name, or an item: every set that wears it (as edited).') end
     local unsaved = unsaved_set_count()
     if unsaved > 0 or editorState.ui.editedOnly[1] then
         imgui.PushStyleColor(ImGuiCol_Text, palette.warn)
@@ -529,12 +538,27 @@ local function draw_sets()
         if not clip_skip(clip, grp) then
             imgui.Spacing()
             imgui.PushStyleColor(ImGuiCol_Text, palette.section)
-            grp.labels = grp.labels
-                or { ['- '] = '- ' .. grp.head .. '##gcg_' .. grp.g, ['+ '] = '+ ' .. grp.head .. '##gcg_' .. grp.g, }
             local x0 = (imgui.GetCursorPosX ~= nil) and imgui.GetCursorPosX() or nil
-            if imgui.Selectable(grp.labels[folded and '+ ' or '- '], false) and (find == '') then
-                editorState.ui.fold[grp.g] = not folded
-                ctx.headings.saveFolds()
+            local arrowW = text_w('- ') -- what the fold marker takes before the heading's name
+            if (imgui.TreeNodeEx ~= nil) and (imgui.SetNextItemOpen ~= nil) then
+                -- the same arrow as the panels' section headers; the fold is ours, set every frame
+                grp.label = grp.label or (grp.head .. '##gcg_' .. grp.g)
+                imgui.SetNextItemOpen(not folded, ImGuiCond_Always or 1)
+                local open = imgui.TreeNodeEx(grp.label, bit.bor(ImGuiTreeNodeFlags_SpanAvailWidth or 0,
+                    ImGuiTreeNodeFlags_NoTreePushOnOpen or 0))
+                if (open == folded) and (find == '') then -- clicked: it turned
+                    editorState.ui.fold[grp.g] = not open
+                    ctx.headings.saveFolds()
+                end
+                local pad = editorPanels.Density(editorState.preferences.density).padding[1]
+                arrowW = ((imgui.GetFontSize ~= nil) and imgui.GetFontSize() or 16) + 2 * pad
+            else
+                grp.labels = grp.labels
+                    or { ['- '] = '- ' .. grp.head .. '##gcg_' .. grp.g, ['+ '] = '+ ' .. grp.head .. '##gcg_' .. grp.g, }
+                if imgui.Selectable(grp.labels[folded and '+ ' or '- '], false) and (find == '') then
+                    editorState.ui.fold[grp.g] = not folded
+                    ctx.headings.saveFolds()
+                end
             end
             drop_set_here(grp.g, nil)
             if imgui.IsItemClicked(1) then editorState.ui.headingMenu, editorState.ui.openHeadingMenu = grp.g, true end
@@ -543,7 +567,7 @@ local function draw_sets()
             end
             imgui.PopStyleColor(1)
             if x0 ~= nil then
-                imgui.SameLine(x0 + text_w('- ' .. grp.head) + 12)
+                imgui.SameLine(x0 + arrowW + text_w(grp.head) + 12)
                 pill(grp.n, palette.dim, palette.chipBg)
             end
             clip_drawn(clip, grp)

@@ -784,10 +784,21 @@ local function draw_set(set)
         imgui.EndChild()
         imgui.EndPopup()
     end
-    local when = ctx.actions.When(set)
+    local when, short = ctx.actions.When(set)
     if when ~= nil then
-        local short = string.find(when, 'No built-in trigger', 1, true) and 'Job-defined set'
-            or (string.match(when, '^(.-)%. ') or when)
+        if string.find(when, 'No built-in trigger', 1, true) then -- GoomSwap never wears it by its name
+            if set.new or ctx.actions.Unused(set) then
+                short = 'nothing yet (never worn)'
+                when = 'GoomSwap never puts this set on by itself, and nothing in your job file names it, so it is never '
+                    .. 'worn. Name it in a Handle function (gFunc.EquipSet(sets.' .. set.name .. '), ByName(\'' .. set.name
+                    .. '\')), or delete it (the Unused filter lists sets like this).'
+            else
+                short = 'your job file\'s code'
+                when = 'GoomSwap never puts this set on by itself: your job file\'s code does, wherever it names it (or '
+                    .. 'builds its name). Look for it in the Handle functions.'
+            end
+        end
+        short = short or (string.match(when, '^(.-)%. ') or when)
         if set.name == 'BluMagical' then
             short = 'Magical Blue Magic (midcast)'
             when =
