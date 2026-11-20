@@ -99,6 +99,10 @@ a job file's own setting still wins. Details: [Settings](settings.md).
   your weapons`).
 - **Used for** (over the slots) says when a set goes on: GoomSwap's own trigger for it, else where your job file's
   code wears it, read from the file (`moving, not engaged (HandleDefault, line 732)`); hover it for each place.
+- **WEAPONS** always shows. With no `Weapon_` set it lists the file's `/mw` `/sw` picks (`MainModes`, `SubModes`) and
+  **+ A /wm mode** (New set with `Weapon_` typed; the box says what the name will be). A `DefaultWeapons` or
+  `WeaponRoles` naming a weapon or mode nothing offers is flagged there and in **Settings**: the engine skips it at
+  load without a word.
 - Search the set list by a set's name or an item (`nyame`: every set wearing a Nyame piece, as edited), or fold its
   headings; for your main sets at the top, make a heading of your own and move them into it
   ([Headings](#headings)). **Unsaved sets**, **Issues**, **Missing**, **Needs RP** and **Unused** filter it; the `?`

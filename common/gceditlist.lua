@@ -22,6 +22,12 @@ local function draw_new_popup()
     imgui.PopItemWidth()
     local name = string.match(editorState.ui.newName[1] or '', '^%s*(.-)%s*$')
     local lname = string.lower(name)
+    local note, bad = ctx.weapon_name_note(name) -- Weapon_...: a new /wm mode, or one mode's own set
+    if note ~= nil then
+        imgui.PushTextWrapPos(340)
+        imgui.TextColored(bad and palette.warn or palette.blue, note)
+        imgui.PopTextWrapPos()
+    end
     local clash = (editorState.document.model.byLower[lname] ~= nil)
     local from = (editorState.selection.setName ~= nil)
             and editorState.document.model.byName[editorState.selection.setName] or nil
@@ -423,6 +429,11 @@ local function draw_sets()
         editorState.ui.sugg = nil
         imgui.OpenPopup('##gcedit_new')
     end
+    if editorState.ui.openNewSet ~= nil then -- the WEAPONS heading's + A /wm mode: New set, Weapon_ typed
+        editorState.ui.newName[1], editorState.ui.sugg = editorState.ui.openNewSet, nil
+        editorState.ui.openNewSet = nil
+        imgui.OpenPopup('##gcedit_new')
+    end
     draw_new_popup()
     imgui.SameLine()
     imgui.PushItemWidth(-1)
@@ -504,6 +515,14 @@ local function draw_sets()
         for _, g in ipairs(ctx.headings.order()) do
             local rows = buckets[g]
             if (rows == nil) and (find == '') and lib.IsCustom(g, GROUPS) then rows = {} end
+            -- WEAPONS shows with no Weapon_ set too: how this file picks weapons, and how to add a /wm mode
+            local filtering = ui.issuesOnly[1] or ui.editedOnly[1] or ui.missingOnly[1] or ui.needsRpOnly[1]
+                or ui.unusedOnly[1]
+            local hint = nil
+            if (g == 'Weapons') and (find == '') and not filtering then
+                rows = rows or {}
+                hint = { empty = (#rows == 0), picks = ctx.weapon_picks(), problems = ctx.weapon_problems() }
+            end
             local isHidden = lib.IsHidden(hiddenPref, g, jobNow)
             if isHidden and (rows ~= nil) then editorState.cache.anyHidden = true end
             if isHidden and (find == '') and not ui.showHidden[1] then rows = nil end
@@ -514,6 +533,7 @@ local function draw_sets()
                     head = string.upper((string.gsub(g, ' %(by name%)', ''))) .. (isHidden and ' (hidden)' or ''),
                     n = tostring(#rows),
                     rows = rows,
+                    hint = hint,
                 }
             end -- '(by name)' left off: it fits
         end
@@ -569,6 +589,24 @@ local function draw_sets()
             if x0 ~= nil then
                 imgui.SameLine(x0 + arrowW + text_w(grp.head) + 12)
                 pill(grp.n, palette.dim, palette.chipBg)
+            end
+            if (grp.hint ~= nil) and not folded then -- WEAPONS: what is wrong, and with no Weapon_ set how to add one
+                imgui.Indent(arrowW)
+                imgui.PushTextWrapPos(0)
+                for _, p in ipairs(grp.hint.problems) do imgui.TextColored(palette.warn, p) end
+                if grp.hint.empty then
+                    for _, p in ipairs(grp.hint.picks) do imgui.TextColored(palette.dim, p) end
+                    if imgui.Selectable('+ A /wm mode: New set Weapon_<Name>##gcw_new', false) then
+                        editorState.ui.openNewSet = 'Weapon_'
+                    end
+                    if imgui.IsItemHovered() then
+                        set_tip('Weapon_<Name> with Main and Sub: /wm <name> puts them on, and its items become /mw /sw '
+                            .. 'picks too. Save adds it to gcinclude.WeaponModes.\nThe picks above are MainModes / '
+                            .. 'SubModes in Settings.')
+                    end
+                end
+                imgui.PopTextWrapPos()
+                imgui.Unindent(arrowW)
             end
             clip_drawn(clip, grp)
         end

@@ -349,6 +349,12 @@ return function(imgui, palette, set_tip, files, groups, setFile, editorState, fe
         end
         imgui.Separator()
         imgui.TextColored(palette.blue, 'Only in ' .. job_name() .. ' (written by Save)')
+        -- a default weapon or role nothing offers: the engine skips it at load without a word
+        for _, p in ipairs((files.WeaponProblems ~= nil) and files.WeaponProblems() or {}) do
+            imgui.PushTextWrapPos(0)
+            imgui.TextColored(palette.warn, p)
+            imgui.PopTextWrapPos()
+        end
         for _, entry in ipairs(JOB) do
             if shown(entry[1]) and ((find ~= '') or job_wanted(entry[1])) then job_row(entry) end
         end
