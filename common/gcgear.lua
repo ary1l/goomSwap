@@ -2,6 +2,8 @@
 -- count, a red X on a slot the game has encumbered. A slot's border says what keeps it: red your /lock, amber the TP
 -- hold, purple Aminon, Hoxne, /proc, an item use (/gce) or a hold (/capacity...); a pink corner: it still needs RP.
 -- Hover a slot: the item, the set that put it on, who holds it. Colours: the bar's colour preset (gcdisplay.Theme).
+-- Every box also shares its slots (luashitacast\hud\<Name>.gear): in the /gchud drop, hover a box's name for its
+-- grid (gcgear.AltTip).
 local gcgear = {}
 
 local imgui = require('imgui')
@@ -199,13 +201,14 @@ local function free(c)
 end
 check_missed = function(now)
     for _, c in ipairs(cells) do
+        c.enc, c.holder = encumbered(c.game), holder(c.slot) -- for the marks (an alt's come from its file)
         local w, worn = source(c)
         local want = (w ~= nil) and string.lower(tostring(w.name)) or nil
         if (w ~= nil) and (not worn) and (not NOT_ITEMS[want]) and free(c) then
             if (c.missName ~= want) then c.missName, c.missSince = want, now end
-            c.missed = (now - c.missSince) >= MISS_AFTER
+            c.missed, c.missItem = (now - c.missSince) >= MISS_AFTER, tostring(w.name)
         else
-            c.missName, c.missSince, c.missed = nil, nil, false
+            c.missName, c.missSince, c.missed, c.missItem = nil, nil, false, nil
         end
     end
 end
@@ -311,13 +314,13 @@ end
 -- One slot's marks over its icon: encumbrance X, holder border, RP corner, ammo count.
 local function marks(dl, c, x, y, cell)
     local x2, y2 = x + cell, y + cell
-    if encumbered(c.game) then -- equipmon's mark: the slot dimmed, a red X
+    if c.enc then -- equipmon's mark: the slot dimmed, a red X
         dl:AddRectFilled(va(x, y), vb(x2, y2), u32(SHADE), 3)
         local m, th = math.floor(cell * 0.22), math.max(2, cell / 12)
         dl:AddLine(va(x + m, y + m), vb(x2 - m, y2 - m), u32(COL.lock), th)
         dl:AddLine(va(x2 - m, y + m), vb(x + m, y2 - m), u32(COL.lock), th)
     end
-    local h = holder(c.slot)
+    local h = c.holder
     if (h ~= nil) then dl:AddRect(va(x + 1, y + 1), vb(x2 - 1, y2 - 1), u32(COL[h]), 3, 0, 2) end
     if (c.rp ~= nil) and c.rp.unfinished then -- a quarter circle in the top right corner
         local r = math.max(4, math.floor(cell * 0.30))
@@ -351,12 +354,12 @@ local function image(id, cell, alpha)
     imgui.PopStyleVar()
     if not ok then error(why, 0) end
 end
--- The 4x4 grid at the cursor; alpha: the icons'; bare: no square
--- behind a worn slot. Returns the hovered slot's cell.
-local function grid_body(cell, gap, alpha, bare)
+-- The 4x4 grid of list (this box's cells, or an alt's) at the cursor; alpha: the icons'; bare: no square behind a
+-- worn slot. Returns the hovered slot's cell and a click on it.
+local function grid_body(list, cell, gap, alpha, bare)
     budget = ICONS_PER_FRAME
     local dl, hovered, click = imgui.GetWindowDrawList(), nil, nil
-    for i, c in ipairs(cells) do
+    for i, c in ipairs(list) do
         if (((i - 1) % 4) ~= 0) then imgui.SameLine(0, gap) end
         local x, y = xy(imgui.GetCursorScreenPos())
         if (x ~= nil) and ((not bare) or (c.id == 0)) then
@@ -373,11 +376,10 @@ local function grid_body(cell, gap, alpha, bare)
     end
     return hovered, click
 end
-local function grid(cell, gap, alpha, bare)
-    poll()
+local function grid(list, cell, gap, alpha, bare)
     colours()
     imgui.PushStyleVar(ImGuiStyleVar_ItemSpacing, va(gap, gap))
-    local ok, r, click = pcall(grid_body, cell, gap, alpha or 1, bare) -- an error must not skip the Pop
+    local ok, r, click = pcall(grid_body, list, cell, gap, alpha or 1, bare) -- an error must not skip the Pop
     imgui.PopStyleVar()
     if not ok then error(r, 0) end
     return r, click
@@ -397,6 +399,117 @@ local function tooltip(fn, ...)
     imgui.PopStyleColor()
     imgui.PopStyleVar(2)
     if not ok then error(why, 0) end
+end
+
+-- Sharing: every box writes its 16 slots to luashitacast\hud\<Name>.gear (gchud's folder; gchud reads only .txt)
+-- when they change, and every 3s, from the engine's tick: "stamp" then per slot "id, count, flags (e encumbered, h
+-- TP hold, r needs RP, m missed swap), lock owners, missed item". The box with the drop reads one on hover.
+local SHARE_EVERY, SHARE_BEAT = 0.5, 3
+local nextShare, lastBody, lastWrite = 0, nil, 0
+local function hud_dir() return string.format('%sconfig\\addons\\luashitacast\\hud\\', AshitaCore:GetInstallPath()) end
+local function share()
+    local now = os.clock()
+    if (now < nextShare) then return end
+    nextShare = now + SHARE_EVERY
+    local name = AshitaCore:GetMemoryManager():GetParty():GetMemberName(0)
+    if (type(name) ~= 'string') or (name == '') then return end
+    poll()
+    local parts = {}
+    for i, c in ipairs(cells) do
+        local owners = {}
+        for o in pairs((inc ~= nil) and inc.LockedSlots[c.slot] or {}) do owners[#owners + 1] = o end
+        table.sort(owners)
+        local flags = (c.enc and 'e' or '') .. (((inc ~= nil) and (inc.HeldSlots[c.slot] ~= nil)) and 'h' or '')
+            .. (((c.rp ~= nil) and c.rp.unfinished) and 'r' or '') .. (c.missed and 'm' or '')
+        parts[i] = table.concat({ tostring(c.id), tostring(c.count), flags, table.concat(owners, ','),
+            c.missed and tostring(c.missItem) or '' }, '\t')
+    end
+    local body, t = table.concat(parts, '\n'), os.time()
+    if (body == lastBody) and ((t - lastWrite) < SHARE_BEAT) then return end
+    local d = hud_dir()
+    if not ashita.fs.exists(d) then ashita.fs.create_directory(d) end
+    local f = io.open(d .. name .. '.gear', 'w')
+    if (f == nil) then return end
+    f:write(tostring(t) .. '\n' .. body)
+    f:close()
+    lastBody, lastWrite = body, t
+end
+gcgear.Tick = share -- gcinclude.Tick (guarded there)
+
+-- Another box's slots, read from its file at most once a second.
+local altCache = {}
+local function read_alt(name)
+    local now = os.clock()
+    local hit = altCache[name]
+    if (hit ~= nil) and (now < hit.until_) then return hit end
+    local e = { until_ = now + 1 }
+    altCache[name] = e
+    local f = io.open(hud_dir() .. name .. '.gear', 'r')
+    if (f == nil) then return e end
+    local text = f:read('*a') or ''
+    f:close()
+    local rows = {}
+    for l in string.gmatch(text, '[^\n]+') do rows[#rows + 1] = l end
+    e.stamp = tonumber(rows[1])
+    local res = AshitaCore:GetResourceManager()
+    local list = {}
+    for i, s in ipairs(ORDER) do
+        local id, count, flags, owners, miss = string.match(rows[i + 1] or '', '^(%d+)\t(%d+)\t(%a*)\t([^\t]*)\t?(.*)$')
+        if (id == nil) then return e end
+        local c = { game = s, slot = s + 1, name = SLOT_NAME[s], id = tonumber(id) or 0, count = tonumber(count) or 0,
+            owners = {} }
+        local r = (c.id ~= 0) and res:GetItemById(c.id) or nil
+        c.item = ((r ~= nil) and (r.Name ~= nil)) and r.Name[1] or nil
+        c.stack = (r ~= nil) and (tonumber(r.StackSize) or 1) or 1
+        for o in string.gmatch(owners, '[^,]+') do c.owners[#c.owners + 1] = o end
+        local user = false
+        for _, o in ipairs(c.owners) do if (o == 'user') then user = true end end
+        c.enc = string.find(flags, 'e', 1, true) ~= nil
+        c.holder = user and 'lock' or ((#c.owners > 0) and 'feature')
+            or (string.find(flags, 'h', 1, true) and 'hold') or nil
+        c.rp = string.find(flags, 'r', 1, true) and { unfinished = true } or nil
+        c.missed = string.find(flags, 'm', 1, true) ~= nil
+        c.missItem = (miss ~= '') and miss or nil
+        list[i] = c
+    end
+    e.cells = list
+    return e
+end
+-- Hover text for another box: its grid, then what holds which slot, and how old the file is.
+local STALE = 15 -- s, as gchud
+local function alt_tip(name, job, e)
+    line(name .. '  ' .. tostring(job or ''), COL_HEAD)
+    if (e.cells == nil) then line('No gear shared yet (an older GoomSwap there?)', COL_DIM); return end
+    local cell, gap = sizes(cfg.scale)
+    grid(e.cells, cell, gap, 1, false)
+    local enc, locks, feats, held, rp, missed = 0, {}, {}, {}, {}, {}
+    for _, c in ipairs(e.cells) do
+        if c.enc then enc = enc + 1 end
+        for _, o in ipairs(c.owners) do
+            if (o == 'user') then locks[#locks + 1] = c.name
+            else feats[#feats + 1] = c.name .. ' (' .. owner_text(o) .. ')' end
+        end
+        if (c.holder == 'hold') then held[#held + 1] = c.name end
+        if (c.rp ~= nil) then rp[#rp + 1] = c.name end
+        if c.missed then missed[#missed + 1] = c.name .. ((c.missItem ~= nil) and (' (' .. c.missItem .. ')') or '') end
+    end
+    if (enc > 0) then line('Encumbered: ' .. enc .. ' slot' .. ((enc == 1) and '' or 's'), COL.lock) end
+    if (#locks > 0) then line('/lock: ' .. table.concat(locks, ', '), COL.lock) end
+    if (#feats > 0) then line('Locked: ' .. table.concat(feats, ', '), COL.feature) end
+    if (#held > 0) then line('Held for TP: ' .. table.concat(held, ', '), COL.hold) end
+    if (#rp > 0) then line('Needs RP: ' .. table.concat(rp, ', '), COL.rp) end
+    if (#missed > 0) then line('Not on: ' .. table.concat(missed, ', '), COL.warn) end
+    local age = math.max(0, os.time() - (e.stamp or 0))
+    line(((age > STALE) and 'stale: ' or 'as of ') .. age .. 's ago', COL_DIM)
+end
+local altOff = false -- an error turns the alt hover off, never the bar
+function gcgear.AltTip(name, job) -- gcdisplay: a dropped line's name/job hovered
+    if altOff or (type(name) ~= 'string') then return end
+    local ok, why = pcall(function() tooltip(alt_tip, name, job, read_alt(name)) end)
+    if not ok then
+        altOff = true
+        if (inc ~= nil) then inc.Err('Gear hover off after an error: ' .. tostring(why)) end
+    end
 end
 
 -- Per-character file.
@@ -454,7 +567,8 @@ local function act(c, click)
     end
 end
 local function window_body(cell, gap)
-    local c, click = grid(cell, gap, cfg.alpha, not cfg.bg)
+    poll()
+    local c, click = grid(cells, cell, gap, cfg.alpha, not cfg.bg)
     if (c ~= nil) then tooltip(details, c) end
     if (c ~= nil) and (click ~= nil) and (inc ~= nil) then act(c, click) end
     local x, y = xy(imgui.GetWindowPos())
@@ -512,6 +626,7 @@ end
 
 function gcgear.Bind(gcinclude, gcdisplay)
     inc, disp = gcinclude, gcdisplay
+    if (type(disp.SetGear) == 'function') then disp.SetGear(gcgear) end
 end
 
 function gcgear.Start()

@@ -571,7 +571,8 @@ end
 local tickErr = false
 function gcinclude.Tick()
     local t0 = (gcinclude.Perf ~= nil) and perfNow() or nil
-    for _, f in ipairs({ (gcauto ~= nil) and gcauto.Tick or false, (gchud ~= nil) and gchud.Tick or false }) do
+    for _, f in ipairs({ (gcauto ~= nil) and gcauto.Tick or false, (gchud ~= nil) and gchud.Tick or false,
+        (gcgear ~= nil) and gcgear.Tick or false }) do
         if f then
             local ok, e = pcall(f)
             if (not ok) and (not tickErr) then tickErr = true; gcinclude.Err('tick: ' .. tostring(e)) end

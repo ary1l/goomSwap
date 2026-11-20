@@ -13,8 +13,9 @@ For **Ashita v4** (LuAshitacast). Start from an example job file and the in-game
 - Precast/midcast layers, TH, spell-element gear, magic burst, Moonshade and action safety checks.
 - Bellhop packer (asks only for what's missing and reachable; never twice across reloads).
 - `/gcbar` status bar and `/gchud` multibox controls; colours follow goomui's preset.
-- `/gcgear` worn-gear grid (equipmon-style icons, ammo, encumbrance) marking `/lock`, TP holds, Aminon/Hoxne and gear
-  that needs RP; hover a slot for the set that put it on.
+- `/gcgear` worn-gear grid (equipmon-style icons, ammo, encumbrance) marking `/lock`, TP holds, Aminon/Hoxne, gear
+  that needs RP and swaps that didn't go on; hover a slot for the set that put it on, a box's name in the `/gchud`
+  drop for its gear.
 - `/gcbuild` to draft a job file from carried gear; `/gcedit` to browse the character's job files, inspect gear,
   fill and compare inherited gear/stat totals, keep item details visible, and resize panels;
   arrange, hide and sort its headings, copy sets to other jobs, find an item in every job file, and edit

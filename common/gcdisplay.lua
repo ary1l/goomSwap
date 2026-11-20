@@ -496,6 +496,8 @@ local TIP_NAME = { Weapons = 'Weapon mode', Main = 'Main pick', Sub = 'Sub pick'
 local menuLists = { until_ = 0 } -- that box's lists, as last read
 local barH = nil -- the bar's own height (its line alone), measured while the drop is shut
 function gcdisplay.SetHud(h) hud = h end
+local gear = nil -- gcgear: a dropped box's gear, shown when its name is hovered
+function gcdisplay.SetGear(g) gear = g end
 local LINE_COLS = { 'wpn', 'Main', 'Sub', 'Range', 'Ammo', 'MeleeSet', 'WsSet', 'IdleSet', 'NukeSet', 'Weapon',
     'TankSet', 'PupMode', 'Hoxne', '|', 'Def', 'SIR', 'TH', 'Kite', 'PROC', 'Burst', 'Death', 'String', 'SongLock' }
 -- One line's pills by column. cyc(k): value, still at its load default; vals(k): every value (own box only, for
@@ -789,12 +791,18 @@ end
 local function alt_row(L, drop, i)
     local r = drop[i]
     B.first = true
+    local x0, y0 = xy(imgui.GetCursorScreenPos())
     local short = r.Name
     local mj, sj = string.match(tostring(r.Job or ''), '^(%a+)'), string.match(tostring(r.Job or ''), '/(%a+)')
     local half = math.ceil(#short / 2)
     -- first half of the letters in the main job's colour, the rest the sub's, outlined the same
     job_box(string.sub(short, 1, half), job_col(mj), nil, string.sub(short, half + 1), job_col(sj or mj))
     put(tostring(r.Job or ''), COL_KEY, 13)
+    if (gear ~= nil) and (x0 ~= nil) and (y0 ~= nil) then -- its name and job hovered: that box's gear (/gcgear)
+        local x1, y1 = xy(imgui.GetItemRectMax())
+        if (x1 ~= nil) and (y1 ~= nil) and imgui.IsWindowHovered() and imgui.IsMouseHoveringRect(va(x0, y0), vb(x1, y1))
+            then gear.AltTip(r.Name, r.Job) end
+    end
     leadW[r.Name] = lead_end()
     cells(L.lines[i + 1], L.cols, r.Name, r.Name)
 end
