@@ -104,6 +104,11 @@ function ui.ElementDots(imgui, list)
         if (o.e == 'Dark') and (o.v > 0) then dl:AddCircle(DOT_AT, r, imgui.GetColorU32(DARK_RING), 10, 1) end
     end
 end
+-- How wide ElementDots draws list.
+function ui.ElementDotsWidth(imgui, list)
+    local h = imgui.GetTextLineHeight and imgui.GetTextLineHeight() or 14
+    return math.floor(h * 0.5 + 0.5) * #list
+end
 -- A block of item text: lines naming an element drawn as dot + value, the rest as text, stacked as one block.
 function ui.StatText(imgui, value)
     local lines = ui.ElementRuns(value)
@@ -131,15 +136,7 @@ do
 local state = {}
 
 function state.Defaults()
-    return { left = 280, middle = 744, density = 'Compact', favorites = {}, favoriteRevision = 0, dirty = false }
-end
-
-local escapes = { ['\\'] = '\\', n = '\n', r = '\r', t = '\t' }
-local function escape(value)
-    return (value:gsub('\\', '\\\\'):gsub('\n', '\\n'):gsub('\r', '\\r'):gsub('\t', '\\t'))
-end
-local function unescape(value)
-    return (value:gsub('\\(.)', function(c) return escapes[c] or c end))
+    return { left = 280, middle = 744, density = 'Compact', dirty = false }
 end
 
 function state.Decode(text)
@@ -151,9 +148,7 @@ function state.Decode(text)
             if width and width == width and width >= 80 and width <= 4000 then preferences[key] = width end
         elseif key == 'density' and (value == 'Compact' or value == 'Comfortable') then
             preferences.density = value
-        elseif key == 'favorite' then
-            preferences.favorites[unescape(value)] = true
-        end
+        end -- others (favorite: removed) are left out, and gone at the next save
     end
     return preferences
 end
@@ -161,14 +156,6 @@ end
 function state.Encode(preferences)
     local lines = { 'GoomSwap editor preferences 1', 'left\t' .. preferences.left, 'middle\t' .. preferences.middle }
     lines[#lines + 1] = 'density\t' .. (preferences.density == 'Comfortable' and 'Comfortable' or 'Compact')
-    local favorites = {}
-    for name, enabled in pairs(preferences.favorites) do
-        if enabled then favorites[#favorites + 1] = name end
-    end
-    table.sort(favorites)
-    for _, name in ipairs(favorites) do
-        lines[#lines + 1] = 'favorite\t' .. escape(name)
-    end
     return table.concat(lines, '\n') .. '\n'
 end
 
@@ -185,22 +172,6 @@ function state.Save(path, preferences, write)
     local ok, err = write(path, state.Encode(preferences))
     if ok then preferences.dirty = false end
     return ok, err
-end
-
--- Saved renames carry favorites over to the new names.
-function state.RenameFavorites(preferences, renames)
-    for old, new in pairs(renames or {}) do
-        if preferences.favorites[old] then
-            preferences.favorites[old], preferences.favorites[new] = nil, true
-            preferences.dirty = true
-        end
-    end
-end
-
-function state.ToggleFavorite(preferences, name)
-    preferences.favorites[name] = not preferences.favorites[name] or nil
-    preferences.favoriteRevision = (preferences.favoriteRevision or 0) + 1
-    preferences.dirty = true
 end
 
 function state.Feedback(editor, text)
@@ -275,18 +246,6 @@ function state.Select(editor, name, slot, tab)
     editor.selection.setName, editor.selection.slot = name, slot
     editor.cache.cover, editor.ui.drag = nil, nil
     editor.selection.tab = tab or (slot and 'gear') or (editor.selection.tab == 'summary' and 'summary') or 'action'
-end
-
-function state.Shortcuts(preferences, model, visible)
-    local favorites = {}
-    local function allowed(name)
-        return model.byName[name] and (not visible or visible(model.byName[name]))
-    end
-    for name, enabled in pairs(preferences.favorites) do
-        if enabled and allowed(name) then favorites[#favorites + 1] = name end
-    end
-    table.sort(favorites)
-    return favorites
 end
 
 ui.State = state
@@ -376,6 +335,15 @@ function panels.Splitter(imgui, colors, id, height, value, default)
         if x ~= 0 then return value + x, true end
     end
     return value, false
+end
+
+-- A collapsing section header in the button greys: blue stays for what is selected.
+function panels.Section(imgui, colors, label, flags)
+    imgui.PushStyleColor(ImGuiCol_Header, colors.btn)
+    imgui.PushStyleColor(ImGuiCol_HeaderHovered, colors.btnHi)
+    local open = imgui.CollapsingHeader(label, flags or 0)
+    imgui.PopStyleColor(2)
+    return open
 end
 
 function panels.SameLineIfFits(imgui, required)
@@ -592,7 +560,8 @@ end
 do
 -- Structured, literal-text item tooltips shared by cards and the gear picker.
 local tooltip = {}
-tooltip.ElementTotals, tooltip.ElementDots = ui.ElementTotals, ui.ElementDots -- the gear cards' resistances
+tooltip.ElementTotals, tooltip.ElementDots, tooltip.ElementDotsWidth = ui.ElementTotals, ui.ElementDots,
+    ui.ElementDotsWidth -- the gear cards' resistances
 local wraps, wrapOrder, wrapIndex = {}, {}, 0
 local wrapUi, wrapFont, wrapMeasure
 local hover
@@ -1283,8 +1252,8 @@ local reasons = {
 local function notes(imgui, colors, model, id, name)
     local n = #model.notes + model.code
     if n == 0 then return end
-    if imgui.CollapsingHeader((name and (name .. ': ') or '') .. 'Other effects / not totaled (' .. n .. ')##' .. id,
-        0) then
+    if ui.Panels.Section(imgui, colors, (name and (name .. ': ') or '') .. 'Other effects / not totaled (' .. n .. ')##'
+        .. id) then
         if model.code > 0 then text(imgui, colors.warn, model.code .. ' code-defined slots were not evaluated.') end
         for _, group in ipairs(model.noteGroups) do
             text(imgui, colors.blue, group.slot .. ': ' .. group.item)

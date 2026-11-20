@@ -383,6 +383,29 @@ local function draw_heading_menu()
     imgui.EndPopup()
 end
 
+-- (?) for the set colours, each line drawn in its colour as now themed
+local COLOR_KEY = {
+    { 'ok', 'Full 16 slots, or a ready partial overlay.' },
+    { 'armor', 'All 12 armor/accessory slots filled; weapons may stay unchanged.' },
+    { 'rp', 'Needs RP.' },
+    { 'bad', 'Names gear you do not own (or deleted on Save).' },
+    { 'warn', 'Unsaved edits.' },
+}
+local function color_key()
+    imgui.TextColored(palette.dim, '(?)')
+    if not imgui.IsItemHovered() then return end
+    imgui.PushStyleColor(ImGuiCol_PopupBg, { 0.055, 0.06, 0.08, 1 })
+    imgui.BeginTooltip()
+    imgui.PushTextWrapPos(440)
+    imgui.TextUnformatted('Set colors:')
+    for _, row in ipairs(COLOR_KEY) do imgui.TextColored(palette[row[1]], row[2]) end
+    imgui.TextColored(palette.dim, 'Colors describe this definition, not inherited layers. Empty weapon slots are '
+        .. 'never counted as gaps. Numbers after a name: (empty slots, not owned); hover one.')
+    imgui.PopTextWrapPos()
+    imgui.EndTooltip()
+    imgui.PopStyleColor()
+end
+
 local function draw_sets()
     if imgui.Button('+ New set##gcedit') then
         editorState.ui.sugg = nil
@@ -390,12 +413,8 @@ local function draw_sets()
     end
     draw_new_popup()
     imgui.SameLine()
-    imgui.Checkbox('Issues##gcedit_iss', editorState.ui.issuesOnly)
-    if imgui.IsItemHovered() then set_tip('Sets with empty slots, missing gear, or unfinished RP.') end
-    imgui.SameLine()
-    help('Set colors:\nGreen: full 16 slots, or a ready partial overlay.\nTeal: all 12 armor/accessory slots filled; weapons may stay unchanged.\nViolet: needs RP. Red: missing named gear. Amber: unsaved edits.\nColors describe this definition, not inherited layers. Empty weapon slots are never counted as gaps.')
     imgui.PushItemWidth(-1)
-    imgui.InputTextWithHint('##gcedit_find', 'Savage, Idle, Cure...', editorState.ui.find, 48)
+    imgui.InputTextWithHint('##gcedit_find', 'Savage, Idle...', editorState.ui.find, 48)
     imgui.PopItemWidth()
     local unsaved = unsaved_set_count()
     if unsaved > 0 or editorState.ui.editedOnly[1] then
@@ -406,6 +425,7 @@ local function draw_sets()
     end
     editorState.ui.unusedOnly = editorState.ui.unusedOnly or { false }
     for index, filter in ipairs({
+        { 'Issues', editorState.ui.issuesOnly },
         { 'Missing', editorState.ui.missingOnly },
         { 'Needs RP', editorState.ui.needsRpOnly },
         { 'Unused', editorState.ui.unusedOnly },
@@ -416,6 +436,7 @@ local function draw_sets()
         if filter[1] == 'Needs RP' then imgui.PopStyleColor() end
         if imgui.IsItemHovered() then
             local descriptions = {
+                Issues = 'Sets with empty slots, missing gear, or unfinished RP.',
                 Missing = 'Sets naming gear you do not own.',
                 ['Needs RP'] = 'Sets using gear below its decoded rank cap.',
                 Unused = 'Sets nothing seems to look for: no built-in trigger by name, not named in your job file, '
@@ -432,6 +453,8 @@ local function draw_sets()
         imgui.Checkbox('Show hidden##set_hidden', ui.showHidden)
         if imgui.IsItemHovered() then set_tip('Headings you hid (right-click a heading) show again, marked hidden.') end
     end
+    editorPanels.SameLineIfFits(imgui, 30)
+    color_key()
     if ui.issuesOnly[1] or ui.editedOnly[1] or ui.missingOnly[1] or ui.needsRpOnly[1] or ui.unusedOnly[1]
         or ui.find[1] ~= '' then
         if imgui.SmallButton('Reset filters##set_filters') then
@@ -451,13 +474,12 @@ local function draw_sets()
         .. tostring(ui.issuesOnly[1])
         .. tostring(ui.editedOnly[1])
         .. tostring(ui.missingOnly[1])
-        .. tostring(ui.needsRpOnly[1]) .. ':' .. (editorState.preferences.favoriteRevision or 0)
+        .. tostring(ui.needsRpOnly[1])
         .. ':' .. tostring(ui.showHidden[1]) .. tostring(ui.unusedOnly[1])
     if editorState.cache.listKey ~= key then
         local buckets = {}
         for _, set in ipairs(editorState.document.model.list) do
-            if matches_set(set, find) and not (editorState.preferences.favorites[set.name]
-                and not editorState.document.deleted[set.name]) then
+            if matches_set(set, find) then
                 buckets[set.group] = buckets[set.group] or {}
                 table.insert(buckets[set.group], set)
             end
@@ -487,29 +509,7 @@ local function draw_sets()
     local scroll = (editorState.cache.listSel ~= editorState.selection.setName)
     editorState.cache.listSel = editorState.selection.setName
     imgui.BeginChild('##gcedit_setlist', { 0, 0 }, 0)
-    local favorites = editorPreferences.Shortcuts(
-        editorState.preferences, editorState.document.model, function(candidate)
-            return not editorState.document.deleted[candidate.name] and matches_set(candidate, find)
-        end
-    )
-    if #favorites > 0 and imgui.CollapsingHeader('Favorites##shortcuts', ImGuiTreeNodeFlags_DefaultOpen or 0) then
-        for index, name in ipairs(favorites) do
-            local favorite = editorState.document.model.byName[name]
-            local status = set_status(favorite)
-            local dirty, col = status.edited, set_color(favorite, status)
-            if col then imgui.PushStyleColor(ImGuiCol_Text, col) end
-            if imgui.Selectable(name .. (dirty and ' (unsaved)' or '') .. '###shortcut_Favorites' .. index,
-                editorState.selection.setName == name) then
-                editorState.selection.back = nil
-                editorPreferences.Select(editorState, name)
-            end
-            if imgui.IsItemClicked(1) then request_context('set', editorState.document.model.byName[name]) end
-            if imgui.IsItemHovered() then set_tip(set_completion_tip(favorite, status)) end
-            if col then imgui.PopStyleColor() end
-        end
-    end
-    if #favorites > 0 then imgui.Separator() end
-    if #editorState.cache.listRows == 0 and #favorites == 0 then imgui.TextColored(palette.dim, 'No set matches.') end
+    if #editorState.cache.listRows == 0 then imgui.TextColored(palette.dim, 'No set matches.') end
     local clip = clip_begin()
     for _, grp in ipairs(editorState.cache.listRows) do
         -- a group folds on a click of its heading; a search shows every match, and the open set's group opens

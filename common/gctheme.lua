@@ -177,6 +177,44 @@ function gctheme.Paint(name, pairs_)
     end
 end
 
+-- How far apart two colours look (CIE76 delta E; ImGui floats 0-1). Under ~25 they are hard to tell apart.
+local function lab(c)
+    local function lin(v) return (v <= 0.04045) and (v / 12.92) or (((v + 0.055) / 1.055) ^ 2.4) end
+    local function f(t) return (t > 0.008856) and (t ^ (1 / 3)) or (7.787 * t + 16 / 116) end
+    local r, g, b = lin(c[1]), lin(c[2]), lin(c[3])
+    local x = f((r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047)
+    local y = f(r * 0.2126 + g * 0.7152 + b * 0.0722)
+    local z = f((r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883)
+    return 116 * y - 16, 500 * (x - y), 200 * (y - z)
+end
+function gctheme.Delta(a, b)
+    local l1, a1, b1 = lab(a)
+    local l2, a2, b2 = lab(b)
+    return math.sqrt((l1 - l2) ^ 2 + (a1 - a2) ^ 2 + (b1 - b2) ^ 2)
+end
+
+-- Colours that must stay told apart (a preset may give two meanings the same shade): in order, each keeps its
+-- colour if far enough from the ones before it, else takes the first that is: own[key], then a lighter, then a
+-- darker shade of its colour (none: the farthest). colors[key] changed in place.
+function gctheme.KeepApart(colors, order, own, gap)
+    local placed = {}
+    for _, key in ipairs(order) do
+        local c = colors[key]
+        local function mix(to, amount)
+            return { c[1] + (to - c[1]) * amount, c[2] + (to - c[2]) * amount, c[3] + (to - c[3]) * amount }
+        end
+        local best, bestGap = nil, -1
+        for _, cand in ipairs({ { c[1], c[2], c[3] }, own[key] or c, mix(1, 0.45), mix(0, 0.35) }) do
+            local near = math.huge
+            for _, p in ipairs(placed) do near = math.min(near, gctheme.Delta(cand, p)) end
+            if near > bestGap then best, bestGap = cand, near end
+            if near >= gap then break end
+        end
+        c[1], c[2], c[3] = best[1], best[2], best[3]
+        placed[#placed + 1] = c
+    end
+end
+
 -- Background tint: a preset colour mixed into a dark base by amount (0-1), in place.
 function gctheme.Tint(target, name, key, base, amount)
     local c = gctheme.Color(name, key)
