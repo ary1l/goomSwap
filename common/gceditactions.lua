@@ -1511,6 +1511,12 @@ function actionModel.New(context)
         ActionFor = action_for,
         VariantName = variant_name,
         Unused = unused,
+        -- the /wm mode a set is worn with, by its name (Tp_Chango, Savage Blade_Chango_Acc, Idle_Chango: Chango)
+        WeaponModeOf = function(set)
+            local st = {}
+            action_for(set, st)
+            return st.wmode
+        end,
         WeaponModes = weapon_modes,
         When = when_description,
         Expected = expected_for,
