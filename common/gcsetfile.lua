@@ -239,8 +239,63 @@ local function ghosts_of(text, vstart, close, slots)
     return out
 end
 
+-- A set inside a set (Buffs = { ['Aftermath: Lv.3'] = {...} }): its name as the engine's layer records give it
+-- (gcinclude.SetLabel), and back to its key.
+local function child_name(parent, key)
+    return parent .. "['" .. key .. "']"
+end
+local function child_key(set, name)
+    local pre = set.parentName .. "['"
+    if (string.sub(name, 1, #pre) == pre) and (string.sub(name, -2) == "']") then
+        return string.sub(name, #pre + 1, -3)
+    end
+    return nil
+end
+
+-- One set's entry e: { name, entry, slots, close, note, oneLine, extra, ghosts } or { name, entry, code }. A set
+-- whose keys are not slots holds sets (Buffs): each table under a name is one in children (only from the top
+-- level, deep = true); the set itself stays as written (extra).
+local function read_set(text, e, name, deep)
+    local set = { name = name, entry = e, slots = {}, bracket = e.bracket }
+    if string.sub(text, e.vstart, e.vstart) ~= '{' then
+        set.code = string.sub(text, e.vstart, e.vend - 1)
+        return set
+    end
+    local se, sclose = scan_table(text, e.vstart)
+    set.close = sclose
+    -- its note: a comment right after the { on the set's first line (Foe = { -- Lullaby keeps...)
+    local after = string.sub(text, e.vstart + 1, line_end(text, e.vstart) - 1)
+    local note = string.match(after, '^%s*%-%-%s*(.-)%s*$')
+    if (note ~= nil) and (note ~= '') then set.note = note end
+    local lines = {}
+    lines[line_start(text, e.vstart)] = true
+    for _, f in ipairs(se) do
+        local slot = (f.key ~= nil) and CANON[string.lower(f.key)] or nil
+        if slot ~= nil then set.slots[slot] = { entry = f, value = read_slot(text, f) } end
+        local ls = line_start(text, f.start)
+        if lines[ls] then set.oneLine = true end
+        lines[ls] = true
+        if slot == nil then
+            set.extra = true -- a non-slot key: the set is left alone
+            if deep and (f.key ~= nil) and (string.sub(text, f.vstart, f.vstart) == '{') then
+                local child = read_set(text, f, child_name(name, f.key), false)
+                child.parentName, child.key = name, f.key
+                set.children = set.children or {}
+                set.children[#set.children + 1] = child
+            end
+        end
+    end
+    set.entries = se
+    if (sclose ~= nil) and (#se > 0) and lines[line_start(text, sclose)] then set.oneLine = true end
+    if (sclose ~= nil) and not set.oneLine and not set.extra then
+        set.ghosts = ghosts_of(text, e.vstart, sclose, set.slots)
+    end
+    return set
+end
+
 -- The job file's sets: { list = { set }, byName = { [name] = set } }. A set: { name, start, vstart, vend, close,
 -- slots = { [Slot] = { entry, value } }, code (not a table literal), oneLine (entries share lines: rewritten whole) }.
+-- A set holding sets (Buffs) is followed in the list by each of them: { parentName, key, ... } named Buffs['Key'].
 local function parse_file(text)
     local a, b = string.find(text, 'local%s+sets%s*=%s*T?%s*{')
     if a == nil then a, b = string.find(text, '[%a_][%w_]*%.Sets%s*=%s*T?%s*{') end
@@ -250,35 +305,15 @@ local function parse_file(text)
     local model = { list = {}, byName = {}, text = text, close = close, open = b }
     for _, e in ipairs(entries) do
         if e.key ~= nil then
-            local set = { name = e.key, entry = e, slots = {}, bracket = e.bracket }
-            if string.sub(text, e.vstart, e.vstart) == '{' then
-                local se, sclose = scan_table(text, e.vstart)
-                set.close = sclose
-                -- its note: a comment right after the { on the set's first line (Foe = { -- Lullaby keeps...)
-                local after = string.sub(text, e.vstart + 1, line_end(text, e.vstart) - 1)
-                local note = string.match(after, '^%s*%-%-%s*(.-)%s*$')
-                if (note ~= nil) and (note ~= '') then set.note = note end
-                local lines = {}
-                lines[line_start(text, e.vstart)] = true
-                for _, f in ipairs(se) do
-                    local slot = (f.key ~= nil) and CANON[string.lower(f.key)] or nil
-                    if slot ~= nil then set.slots[slot] = { entry = f, value = read_slot(text, f) } end
-                    local ls = line_start(text, f.start)
-                    if lines[ls] then set.oneLine = true end
-                    lines[ls] = true
-                    if slot == nil then
-                        set.extra = true
-                    end -- a non-slot key (a nested set): left alone
-                end
-                if (sclose ~= nil) and (#se > 0) and lines[line_start(text, sclose)] then set.oneLine = true end
-                if (sclose ~= nil) and not set.oneLine and not set.extra then
-                    set.ghosts = ghosts_of(text, e.vstart, sclose, set.slots)
-                end
-            else
-                set.code = string.sub(text, e.vstart, e.vend - 1)
-            end
+            local set = read_set(text, e, e.key, true)
             model.list[#model.list + 1] = set
             model.byName[e.key] = set
+            for _, child in ipairs(set.children or {}) do
+                if model.byName[child.name] == nil then
+                    model.list[#model.list + 1] = child
+                    model.byName[child.name] = child
+                end
+            end
         end
     end
     return model
@@ -536,7 +571,7 @@ local function weapon_modes_splice(s, newSets, out)
     end
     local adds = {}
     for _, set in ipairs(newSets) do
-        local mode = weapon_mode(set.name, names)
+        local mode = (set.parentName == nil) and weapon_mode(set.name, names) or nil
         if mode and not seen[string.lower(mode)] then
             adds[#adds + 1], names[#names + 1], seen[string.lower(mode)] = mode, mode, true
         end
@@ -685,7 +720,7 @@ local function related(model, name)
     local function find(n)
         local l = string.lower(n)
         for _, set in ipairs(model.list) do
-            if not set.new and (string.lower(set.name) == l) then return set end
+            if not set.new and (set.parentName == nil) and (string.lower(set.name) == l) then return set end
         end
         return nil
     end
@@ -707,28 +742,43 @@ end
 -- Splices for sets made in the editor: each goes after set.after (a set's name) when the file has it, else after
 -- its nearest relative, else after the file's last set of its group (else after the last set).
 -- news: { set } in the order made (set.name, set.group, set.after); edits: [name] = { [Slot] = edit }.
+-- A set inside a set (ns.parentName) goes after ns.after when that is its sibling, else after the parent's last
+-- entry, else into the empty parent.
 local function new_set_splices(s, model, news, edits, out)
     local byAnchor, order = {}, {}
     for _, ns in ipairs(news) do
-        local anchor, last
+        local anchor, last, parent
         local after = (ns.after ~= nil) and model.byName[ns.after] or nil
-        if (after ~= nil) and not after.new then
-            anchor = after
+        if ns.parentName ~= nil then
+            parent = model.byName[ns.parentName]
+            if (parent == nil) or parent.new or (parent.close == nil) or (parent.parentName ~= nil) then
+                return false
+            end
+            if (after ~= nil) and not after.new and (after.parentName == ns.parentName) then
+                anchor = after
+            else
+                local entries = parent.entries or {}
+                anchor = (#entries > 0) and { name = '\0' .. #entries, entry = entries[#entries] } or nil
+            end
         else
-            anchor = related(model, ns.name)
-        end
-        if anchor == nil then
-            for _, set in ipairs(model.list) do
-                if not set.new then
-                    last = set
-                    if set.group == ns.group then anchor = set end
+            if (after ~= nil) and not after.new and (after.parentName == nil) then
+                anchor = after
+            else
+                anchor = related(model, ns.name)
+            end
+            if anchor == nil then
+                for _, set in ipairs(model.list) do
+                    if not set.new and (set.parentName == nil) then
+                        last = set
+                        if set.group == ns.group then anchor = set end
+                    end
                 end
             end
+            anchor = anchor or last
         end
-        anchor = anchor or last
-        local key = (anchor ~= nil) and anchor.name or ''
+        local key = (ns.parentName or '') .. '\0' .. ((anchor ~= nil) and anchor.name or '')
         if byAnchor[key] == nil then
-            byAnchor[key] = { anchor = anchor, sets = {} }
+            byAnchor[key] = { anchor = anchor, parent = parent, sets = {} }
             order[#order + 1] = key
         end
         table.insert(byAnchor[key].sets, ns)
@@ -736,7 +786,24 @@ local function new_set_splices(s, model, news, edits, out)
     for _, key in ipairs(order) do
         local g = byAnchor[key]
         local ind, at
-        if g.anchor ~= nil then
+        if (g.anchor == nil) and (g.parent ~= nil) then
+            -- an empty parent: `Buffs = {}` / `{ -- note }` on one line opens up; one over lines takes them above '}'
+            local p = g.parent
+            local base = indent_at(s, p.entry.start)
+            ind = base .. step(base)
+            local parts = {}
+            for _, ns in ipairs(g.sets) do
+                parts[#parts + 1] = new_set_text(ns.key, edits[ns.name], ind)
+            end
+            if line_start(s, p.close) == line_start(s, p.entry.vstart) then
+                local note = string.match(string.sub(s, p.entry.vstart + 1, p.close - 1), '%-%-.*$')
+                local head = (note ~= nil) and (' ' .. note) or ''
+                out[#out + 1] = { p.entry.vstart + 1, p.close, head .. '\n' .. table.concat(parts) .. base }
+            else
+                local here = line_start(s, p.close)
+                out[#out + 1] = { here, here, table.concat(parts) }
+            end
+        elseif g.anchor ~= nil then
             local e = g.anchor.entry
             ind = indent_at(s, e.start)
             if e.sep == nil then out[#out + 1] = { e.vend, e.vend, ',' } end
@@ -749,11 +816,13 @@ local function new_set_splices(s, model, news, edits, out)
                 return false
             end -- `local sets = {}` on one line
         end
-        local parts = {}
-        for _, ns in ipairs(g.sets) do
-            parts[#parts + 1] = new_set_text(ns.name, edits[ns.name], ind)
+        if at ~= nil then
+            local parts = {}
+            for _, ns in ipairs(g.sets) do
+                parts[#parts + 1] = new_set_text(ns.key or ns.name, edits[ns.name], ind)
+            end
+            out[#out + 1] = { at, at, table.concat(parts) }
         end
-        out[#out + 1] = { at, at, table.concat(parts) }
     end
     return true
 end
@@ -802,12 +871,61 @@ end
 local REF_CALLS = { 'ByName', 'EquipSet', 'ForceEquipSet', 'FindSet', 'FindFilled' }
 local MODE_LISTS = { 'WeaponModes', 'DefaultWeapons', 'WeaponRoles' }
 
+-- A set inside a set renamed: each place code takes key `old` from the parent (sets.Buffs['old'],
+-- sets['Buffs'].old, FindSet('Buffs')['old']) gets `new`. Returns how many.
+local function child_refs(s, code, parent, old, new, out)
+    local ends = {} -- where each reference to the parent ends
+    for _, name, after in string.gmatch(code, '()%f[%w_][sS]ets%s*%.%s*([%a_][%w_]*)()') do
+        if name == parent then ends[#ends + 1] = after end
+    end
+    local function quoted_ref(at, close)
+        local text, after = read_string(s, at)
+        if text ~= parent then return end
+        local k = skip_ws(s, after)
+        if string.sub(s, k, k) == close then ends[#ends + 1] = k + 1 end
+    end
+    for at in string.gmatch(code, '%f[%w_][sS]ets%s*%[%s*()[\'"]') do quoted_ref(at, ']') end
+    for _, call in ipairs(REF_CALLS) do
+        for at in string.gmatch(code, '%f[%w_]' .. call .. '%s*%(%s*()[\'"]') do quoted_ref(at, ')') end
+    end
+    local refs, newKey = 0, key_text(new)
+    for _, p in ipairs(ends) do
+        local j = skip_ws(s, p)
+        local c = string.sub(s, j, j)
+        if (c == '[') and (long_bracket(s, j) == nil) then
+            local k = skip_ws(s, j + 1)
+            local qc = string.sub(s, k, k)
+            if (qc == "'") or (qc == '"') then
+                local text, after = read_string(s, k)
+                local e = skip_ws(s, after)
+                if (text == old) and (string.sub(s, e, e) == ']') then
+                    out[#out + 1] = { k + 1, after - 1, quoted(new, qc) }
+                    refs = refs + 1
+                end
+            end
+        elseif (c == '.') and (string.sub(s, j + 1, j + 1) ~= '.') then
+            local n0, name, n1 = string.match(s, '^%s*()([%a_][%w_]*)()', j + 1)
+            if name == old then
+                out[#out + 1] = { j, n1, (string.sub(newKey, 1, 1) == '[') and newKey or ('.' .. newKey) }
+                refs = refs + 1
+            end
+        end
+    end
+    return refs
+end
+
 -- Splices renaming set `old` to `new` everywhere the file names it: the key, sets.Old / sets['Old'],
 -- ByName('Old') and the like, and for a Weapon_ set its mode in WeaponModes / DefaultWeapons / WeaponRoles.
 -- Returns the number of places outside the key.
 local function rename_splices(s, model, old, new, out)
     local set = model.byName[old]
     if (set == nil) or (set.entry == nil) or (set.entry.keyEnd == nil) then return nil end
+    if set.parentName ~= nil then -- a set inside a set: its key, and code taking it from the parent
+        local key = child_key(set, new)
+        if key == nil then return nil end
+        out[#out + 1] = { set.entry.start, set.entry.keyEnd + 1, key_text(key) }
+        return child_refs(s, code_only(s), set.parentName, set.key, key, out)
+    end
     out[#out + 1] = { set.entry.start, set.entry.keyEnd + 1, key_text(new) }
     local code, refs = code_only(s), 0
     for at, _, name, after in string.gmatch(code, '()%f[%w_][sS]ets%s*%.%s*()([%a_][%w_]*)()') do
@@ -1086,6 +1204,8 @@ return {
     SetCharSetting = set_char_setting,
     slots = SCREEN,
     Parse = parse_file,
+    ChildName = child_name,
+    ChildKey = child_key,
     FormatItem = item_text,
     FormatKey = key_text,
     ReadCommentedSlots = ghosts_of,

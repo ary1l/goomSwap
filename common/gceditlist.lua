@@ -277,7 +277,13 @@ local function drop_set_here(heading, before)
     local H = ctx.headings
     local moved = editorState.document.model.byName[name]
     local changes = {}
-    if (moved ~= nil) and (moved.group ~= heading) then
+    local parent = (moved ~= nil) and (moved.parentName ~= nil) and editorState.document.model.byName[moved.parentName]
+    if parent and (parent.group == heading) then -- back under its parent: no placement of its own
+        if H.lib.PlacedBy(H.setting(), name) ~= nil then
+            changes.EditorGroups = H.lib.Place(H.setting(), H.builtins, name, nil)
+        end
+        before = nil
+    elseif (moved ~= nil) and (moved.group ~= heading) then
         changes.EditorGroups = H.lib.Place(H.setting(), H.builtins, name, heading)
     end
     if before ~= nil then
@@ -543,8 +549,12 @@ local function draw_sets()
                 local on = (editorState.selection.setName == set.name)
                 if not clip_skip(clip, set, on and scroll) then -- the set picked elsewhere is drawn, to scroll to it
                     -- its label, redone when an edit or the set list changes (editorState.document.revision)
-                    if set.rowVer ~= editorState.document.revision then
-                        local label = set.name
+                    -- a set inside a set under its parent's heading: indented, by its key; moved elsewhere: its name
+                    local parent = (set.parentName ~= nil) and editorState.document.model.byName[set.parentName] or nil
+                    local nested = (parent ~= nil) and (parent.group == set.group)
+                    if (set.rowVer ~= editorState.document.revision) or (set.rowNested ~= nested) then
+                        set.rowNested = nested
+                        local label = nested and ('    ' .. set.key) or set.name
                         if editorState.document.deleted[set.name] then
                             label = label .. ' (delete)'
                         elseif set.new then
@@ -566,7 +576,7 @@ local function draw_sets()
                         set_tip(set_completion_tip(set, status))
                     end
                     drag_set_from(set)
-                    drop_set_here(grp.g, set)
+                    drop_set_here(grp.g, (not nested) and set or nil) -- under its parent: in file order
                     if col ~= nil then imgui.PopStyleColor(1) end
                     if on then left_bar(palette.sel) end
                     if on and scroll and (imgui.SetScrollHereY ~= nil) then imgui.SetScrollHereY(0.5) end

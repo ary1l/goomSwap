@@ -20,6 +20,7 @@ Edits your loaded job file. Changes stay in memory until you confirm a save. `/g
 | A Main/Sub/Range pick (`/mw` `/sw` `/rw`) | Nothing: every item in a `Weapon_` set is one. Others go in `gcinclude.SubModes` (etc.) in the file |
 | A COR/RNG gun | Add its name to `gcinclude.RangeModes` in the file |
 | A melee mode (`/mset`) | **Related** tab, **+ New mode**; its sets are `<set>_<mode>` (`Tp_Hybrid`) |
+| A set for one buff | Open `Buffs` (idle/engaged), `Buffs_Ws` or `Buffs_Midcast`, type the buff's name as the game shows it, **New buff set**. Each shows under its parent (`Buffs['Aftermath: Lv.3']`) and edits, deletes and copies to other jobs like any set. Renaming one also renames code that takes it from its parent (`sets.Buffs['Haste']`, `sets.Buffs.Haste`) |
 
 ## Headings
 
@@ -31,6 +32,8 @@ The set list is grouped under headings (Idle, Defense, Melee, Weapons...). Arran
 - **Right-click a set:** **Move to heading** puts that set under any heading; **Back to where its name puts it**
   undoes the move. **Move up / Move down** reorders it inside its heading.
 - **Drag a set** onto a heading to move it there, or onto another set to put it just before that one.
+- **Buff sets** (`Buffs['Haste']`) sit under their parent in file order. Drag one or use **Move to heading** to put
+  it elsewhere (shown by its full name there); **Back under Buffs** returns it.
 - **Hide** (heading menu): **Hide on <JOB>** or **Hide on every job**. **Show hidden** (beside the filters) shows
   them again, marked hidden; a search always shows them. **Show again** undoes it.
 - **Sets in it** (heading menu): **File order**, **A-Z**, or **Your order** (what Move up / down and dragging make).
@@ -155,6 +158,6 @@ a job file's own setting still wins. Details: [Settings](settings.md).
 
 **Save + reload** shows a review (before/after per set, new, deleted and renamed sets, weapon and melee modes);
 cancelling writes nothing. Saving checks the file didn't change on disk and still parses, writes a dated backup,
-then reloads (reopening the editor if ticked). Code-defined or nested sets need a text editor; everything outside
-the gear definitions is kept as written. The newest ten editor backups per file are kept (`EditorBackupKeep` in
+then reloads (reopening the editor if ticked). Code-defined sets need a text editor; everything outside the gear
+definitions is kept as written. The newest ten editor backups per file are kept (`EditorBackupKeep` in
 char.lua's `settings`, `0` keeps all). Widths, favorites and density live in the job's `.gcedit-ui` file.

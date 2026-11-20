@@ -1126,7 +1126,7 @@ function actionModel.New(context)
                 end
                 local pre = string.lower(b[1]) .. '_'
                 for _, s in ipairs(document.model.list) do -- Hoxne_Tp_Impetus, Hoxne_Ws_Impetus&Footwork: any buff name
-                    if string.sub(s.lname, 1, #pre) == pre then
+                    if (s.parentName == nil) and (string.sub(s.lname, 1, #pre) == pre) then
                         local rest = string.sub(s.name, #pre + 1)
                         local isMode = msetOn[rest] or (rest == 'Dt') or (rest == 'HighBuff')
                         for _, m in ipairs(o.msets) do
@@ -1248,7 +1248,7 @@ function actionModel.New(context)
                             local lp = string.lower(pre)
                             for _, s in ipairs(document.model.list) do
                                 local val = string.sub(s.name, #pre + 1)
-                                if (string.sub(s.lname, 1, #lp) == lp) and (val ~= '') and not string.find(val,
+                                if (s.parentName == nil) and (string.sub(s.lname, 1, #lp) == lp) and (val ~= '') and not string.find(val,
                                     '_', 1, true) then
                                     local c = plus(conds, cycle_text(cyc, val))
                                     if r.kind == 'byname' then
@@ -1289,7 +1289,7 @@ function actionModel.New(context)
                 hoxne(bases, true)
             end
             notes[#notes + 1] =
-                "Buffs_Ws: a set per buff (Buffs_Ws = { ['Aftermath: Lv.3'] = {...} }), edited in the file."
+                "Buffs_Ws: a set per buff (Buffs_Ws = { ['Aftermath: Lv.3'] = {...} }), listed under Buffs_Ws."
         elseif ev == 'Midcast' then
             -- WearChildren over every set the handler wore; left out: TH, idle/weapon swaps (Idle_Staff) and a set that
             -- already carries the word (Burst, Self_Cure: no Burst_Burst)
@@ -1322,7 +1322,7 @@ function actionModel.New(context)
                 add('LightBonus', (ctx.skill == nil) and { 'Healing Magic spells' } or {})
             end
             add('SIR', { 'SIR mode' })
-            notes[#notes + 1] = 'Buffs_Midcast: a set per buff, edited in the file.'
+            notes[#notes + 1] = 'Buffs_Midcast: a set per buff, listed under Buffs_Midcast.'
         elseif ev == 'Default' then
             local eng, idle = st('Engaged'), st('Idle')
             if eng ~= nil then
@@ -1392,7 +1392,7 @@ function actionModel.New(context)
             add('Incapacitated', { 'slept, petrified, stunned or terrorized' })
             add('Sleeping', { 'asleep' })
             add('Doomed', { 'Doom or Bane' })
-            notes[#notes + 1] = "Buffs: a set per buff (Buffs = { ['Aftermath: Lv.3'] = {...} }), edited in the file."
+            notes[#notes + 1] = "Buffs: a set per buff (Buffs = { ['Aftermath: Lv.3'] = {...} }), listed under Buffs."
         end
 
         -- 3. the file's own variants of a set listed (Ws_Default_SA): nothing above looks for them
@@ -1403,7 +1403,7 @@ function actionModel.New(context)
         for _, w in ipairs(listed) do
             local pre = string.lower(w.name) .. '_'
             for _, s in ipairs(document.model.list) do
-                if (string.sub(s.lname, 1,
+                if (s.parentName == nil) and (string.sub(s.lname, 1,
                     #pre) == pre) and not seen[s.lname] and ((ev == 'Precast') or not string.match(s.lname,
                     '_precast$')) then
                     add(s.name, plus(w.conds, "your job file's own logic"), w.name, { src = 'file' })
@@ -1466,7 +1466,7 @@ function actionModel.New(context)
     end
     local function unused(set)
         local n, l = set.name, string.lower(set.name)
-        if (set.code ~= nil) or set.extra or set.new then return false end
+        if (set.code ~= nil) or set.extra or set.new or (set.parentName ~= nil) then return false end
         if ENGINE_NAMES[l] or (DEFAULT_KEY[n] ~= nil) or ENGINE_DEFAULT[n] then return false end
         for _, p in ipairs(ENGINE_PATTERNS) do
             if string.match(l, p) then return false end

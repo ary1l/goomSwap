@@ -6,6 +6,8 @@ return function(
     pending_weapon_mode, pill, profiler, red_button, registration_plan, request_context, rp_uses, save_preferences,
     set_status, set_tip, statModel, tag, text_w, use_worn, where, wrap, xy
 )
+local BUFF_HOLDERS = { buffs = true, buffs_ws = true, buffs_midcast = true } -- sets the engine reads per buff
+
 local function describe(name)
     local key = string.lower(name)
     if key == "carrier's sash" then
@@ -791,8 +793,44 @@ local function draw_set(set)
         imgui.TextColored(palette.dim, string.sub(set.code, 1, 120))
         return
     end
+    -- a set of sets (Buffs = { ['Aftermath: Lv.3'] = {...} }): its sets, and a new one by key
+    local holder = (set.children ~= nil) or ((set.parentName == nil) and not set.new and (set.close ~= nil)
+        and (set.count == 0) and BUFF_HOLDERS[set.lname])
+    if holder then
+        local doc = editorState.document
+        imgui.TextColored(palette.dim, 'A set per buff, worn while that buff is up. Click one to edit it.')
+        for _, s in ipairs(doc.model.list) do
+            if (s.parentName == set.name) and imgui.Button(s.key .. '##gcchild_' .. s.name) then go_to(s.name) end
+        end
+        if set.parentName == nil then
+            editorState.ui.childKey = editorState.ui.childKey or { '' }
+            imgui.PushItemWidth(240)
+            imgui.InputText('##gcchild_key', editorState.ui.childKey, 64)
+            imgui.PopItemWidth()
+            local key = string.match(editorState.ui.childKey[1] or '', '^%s*(.-)%s*$')
+            local taken = doc.model.byLower[string.lower(set.name .. "['" .. key .. "']")] ~= nil
+            imgui.SameLine()
+            if imgui.Button('New buff set##gcchild_new') and (key ~= '') and not taken
+                and not string.find(key, '[\r\n]') then
+                editorState.ui.childKey[1] = ''
+                make_set(nil, nil, false, set, key)
+            end
+            if taken then imgui.TextColored(palette.warn, key .. ' exists in ' .. set.name .. '.') end
+            set_tip('The buff\'s name as the game shows it (Aftermath: Lv.3, Haste).')
+        end
+        local direct = false
+        for _ in pairs(set.slots) do direct = true end
+        if direct then
+            imgui.TextColored(palette.warn, 'Slots written directly in ' .. set.name .. ' are never worn: '
+                .. 'each key is read as a buff. Move them into a buff set in the file.')
+        end
+        if set.extra and (set.children == nil) then
+            imgui.TextColored(palette.dim, 'Holds more than slots: edit it in the file.')
+        end
+        return
+    end
     if set.extra then
-        imgui.TextColored(palette.dim, 'Holds more than slots (a set per buff, a nested set): edit it in the file.')
+        imgui.TextColored(palette.dim, 'Holds more than slots (a nested set): edit it in the file.')
         return
     end
     local gaps = empty_armor(set)

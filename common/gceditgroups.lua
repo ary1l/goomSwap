@@ -286,7 +286,22 @@ function groups.SortRows(rows, mode, order)
             return file[a] < file[b]
         end)
     end
-    return out
+    -- a set inside a set (parentName: Buffs['Haste']) stays right after its parent, in file order
+    local present, kids, flat = {}, {}, {}
+    for _, r in ipairs(out) do present[r.name] = true end
+    for _, r in ipairs(rows) do
+        if (r.parentName ~= nil) and present[r.parentName] then
+            kids[r.parentName] = kids[r.parentName] or {}
+            table.insert(kids[r.parentName], r)
+        end
+    end
+    for _, r in ipairs(out) do
+        if (r.parentName == nil) or not present[r.parentName] then
+            flat[#flat + 1] = r
+            for _, k in ipairs(kids[r.name] or {}) do flat[#flat + 1] = k end
+        end
+    end
+    return flat
 end
 
 -- A copy of map with heading's value replaced (nil: removed); the key keeps its written case.

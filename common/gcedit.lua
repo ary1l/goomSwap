@@ -311,8 +311,13 @@ local function headings_setting()
     return settingsFiles.HeadingPref('EditorGroups')
 end
 
--- The heading a set sits under, and its built-in one.
-local function group_of(n)
+-- The heading a set sits under, and its built-in one. parent: a set inside a set (Buffs['Haste']) goes where it
+-- was moved by its exact name, else under its parent.
+local function group_of(n, parent)
+    if parent ~= nil then
+        local g, builtin = group_of(parent)
+        return editorGroups.PlacedBy(headings_setting(), n) or g, builtin
+    end
     local builtin = builtin_group(n)
     return editorGroups.Assign(n, builtin, headings_setting()), builtin
 end
@@ -329,7 +334,7 @@ local ARMOR = { 'Head', 'Neck', 'Ear1', 'Ear2', 'Body', 'Hands', 'Ring1', 'Ring2
 local function regroup()
     local model = (editorState.document ~= nil) and editorState.document.model or nil
     if model == nil then return end
-    for _, set in ipairs(model.list) do set.group, set.builtin = group_of(set.name) end
+    for _, set in ipairs(model.list) do set.group, set.builtin = group_of(set.name, set.parentName) end
     editorState.cache.listKey = nil
 end
 
@@ -442,7 +447,7 @@ local function load_model(document)
     model.text = text -- the job file's handlers are read from it (scan_job), once, when All sets first needs them
     model.byLower = {}
     for _, set in ipairs(model.list) do
-        set.group, set.builtin = group_of(set.name)
+        set.group, set.builtin = group_of(set.name, set.parentName)
         set.lname = string.lower(set.name)
         model.byLower[set.lname] = set
         local n = 0
@@ -584,7 +589,7 @@ local function registration_plan()
 end
 
 local function pending_weapon_mode(set)
-    if set.new and string.sub(set.name, 1, 7) == 'Weapon_' then
+    if set.new and (set.parentName == nil) and string.sub(set.name, 1, 7) == 'Weapon_' then
         for _, mode in ipairs(registration_plan().modes) do
             if set.name == 'Weapon_' .. mode then return mode end
         end
@@ -716,18 +721,21 @@ local function draw_rename()
     local ui = editorState.ui
     if ui.requestRenameSet then
         ui.renameSet, ui.requestRenameSet = ui.requestRenameSet, nil
-        ui.renameName, ui.renameVariants = { ui.renameSet }, { true }
+        local s = editorState.document.model.byName[ui.renameSet or '']
+        ui.renameName, ui.renameVariants = { (s ~= nil) and s.key or ui.renameSet }, { true }
         imgui.OpenPopup('##gcedit_rename')
     end
     if not imgui.BeginPopup('##gcedit_rename') then return end
     local set = editorState.document.model.byName[ui.renameSet or '']
     if set ~= nil then
-        imgui.TextUnformatted('Rename ' .. set.name)
+        local child = set.parentName ~= nil -- a set inside a set: only its key changes
+        imgui.TextUnformatted('Rename ' .. set.name .. (child and (' (its name in ' .. set.parentName .. ')') or ''))
         imgui.PushItemWidth(340)
         imgui.InputText('##gcedit_rename_name', ui.renameName, 64)
         imgui.PopItemWidth()
         local new = string.match(ui.renameName[1] or '', '^%s*(.-)%s*$')
-        local variants = variants_of(set.name)
+        if child then new = (new == '') and '' or setFile.ChildName(set.parentName, new) end
+        local variants = child and {} or variants_of(set.name)
         if #variants > 0 then
             imgui.Checkbox('Also rename ' .. #variants .. ' variant' .. (#variants == 1 and '' or 's') .. ' ('
                 .. variants[1] .. ' -> ' .. new .. string.sub(variants[1], #set.name + 1) .. ')##gcedit_rename_v',
@@ -745,10 +753,11 @@ local function draw_rename()
         else
             local refs = setFile.RenameCount(editorState.document.model.text, editorState.document.model,
                 set.name, new) or 0
-            imgui.TextColored(palette.dim, refs .. ' reference' .. (refs == 1 and '' or 's')
-                .. ' in code (sets.X, ByName, EquipSet, weapon mode lists) renamed too. Comments are left alone.')
+            imgui.TextColored(palette.dim, refs .. ' reference' .. (refs == 1 and '' or 's') .. ' in code ('
+                .. (child and ('sets.' .. set.parentName .. "['" .. set.key .. "']")
+                    or 'sets.X, ByName, EquipSet, weapon mode lists') .. ') renamed too. Comments are left alone.')
         end
-        if by_name(set) or (ENGINE_SET[string.lower(set.name)] ~= nil) then
+        if (not child) and (by_name(set) or (ENGINE_SET[string.lower(set.name)] ~= nil)) then
             imgui.TextColored(palette.warn,
                 'GoomSwap finds ' .. set.name .. ' by its name: renamed, it is only worn where your code names it.')
         end
@@ -774,11 +783,26 @@ local function draw_delete_confirmation()
     if not imgui.BeginPopup('##gcedit_delete_set') then return end
     local set = editorState.document.model.byName[editorState.ui.deleteSet]
     if set then
-        imgui.TextColored(palette.bad, 'Delete ' .. set.name .. ' from the job file?')
+        local doc = editorState.document
+        local children = {} -- the sets inside it (Buffs['X']) go with it
+        for _, s in ipairs(doc.model.list) do
+            if s.parentName == set.name then children[#children + 1] = s end
+        end
+        imgui.TextColored(palette.bad, 'Delete ' .. set.name .. ((#children > 0) and (' and its ' .. #children
+            .. ' set' .. ((#children == 1) and '' or 's')) or '') .. ' from the job file?')
         imgui.PushTextWrapPos(440)
         imgui.TextUnformatted('References elsewhere remain. The definition is removed on Save, with a backup.')
         imgui.PopTextWrapPos()
         if red_button('Confirm deletion##gcedit') then
+            for _, s in ipairs(children) do
+                if s.new then
+                    drop_new(s)
+                else
+                    doc.edits[s.name], doc.deleted[s.name] = nil, nil
+                    if doc.renames ~= nil then doc.renames[s.name] = nil end
+                    if doc.renameRefs ~= nil then doc.renameRefs[s.name] = nil end
+                end
+            end
             editorState.document.deleted[set.name] = true
             editorState.document.edits[set.name] = nil
             editorState.document.revision = editorState.document.revision + 1
@@ -879,7 +903,8 @@ local function draw_copy_jobs()
         local res, player = AshitaCore:GetResourceManager(), AshitaCore:GetMemoryManager():GetPlayer()
         local _, others = job_files()
         req.plans = editorFiles.PlanCopy({
-            name = set.name, slots = SCREEN, piece = function(slot) return current(set, slot) end,
+            name = set.name, parentName = set.parentName, key = set.key, slots = SCREEN,
+            piece = function(slot) return current(set, slot) end,
             read = read_file, parse = fileWriter.Parse, item = function(n) return res:GetItemByName(n, 0) end,
             level = function(job) return player:GetJobLevel(job) end,
         }, others)

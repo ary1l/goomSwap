@@ -838,6 +838,17 @@ do
             return false
         end
 
+        -- The set a weapon mode wears: its /mset variant first (Weapon_Carnwenhan_Acc or Weapon_CarnwenhanAcc while
+        -- /mset Acc), else Weapon_<mode> (_1h without Dual Wield). nil: none.
+        local function modeSet(mode)
+            local set = nil
+            local ms = gcdisplay.GetCycle('MeleeSet')
+            if (type(ms) == 'string') and (ms ~= 'Default') then
+                set = gcinclude.WeaponSetFor(mode .. '_' .. ms) or gcinclude.WeaponSetFor(mode .. ms)
+            end
+            return set or gcinclude.WeaponSetFor(mode)
+        end
+
         -- The current weapon mode's own item for a slot (Weapon_<Mode>[_1h].Sub...), lower case, or nil.
         local function modeSlotItem(cname)
             local mode = gcdisplay.GetCycle('Weapons')
@@ -888,6 +899,8 @@ do
                 return
             end
             local before = gcinclude.WeaponLayerKey()
+            local modeBefore = gcdisplay.GetCycle('Weapons')
+            local setNow = {} -- slot picks this command sets itself: kept
             if arg == nil then
                 if (type(list) ~= 'table') or (#list == 0) then return setPick(cname, '') end
                 gcdisplay.AdvanceCycle(cname)
@@ -898,6 +911,7 @@ do
                 if (want == 'default') and (type(gcinclude.DefaultWeapons) == 'table') then
                     for dname, dval in pairs(gcinclude.DefaultWeapons) do
                         gcinclude.SetWeaponCycle(dname, dval, true)
+                        setNow[dname] = true
                     end
                 elseif want == 'default' then
                     gcinclude.SetWeaponCycle('Weapons', gcinclude.DefaultWeapons or 'None', true)
@@ -910,6 +924,18 @@ do
                     -- /wm <mode> <sub>: the mode, then a Sub pick over it (/wm cali bunzi)
                     if (#words < 2) or not gcinclude.SetWeaponCycle('Weapons', words[1]) then return end
                     setPick('Sub', table.concat(words, ' ', 2))
+                    setNow.Sub = true
+                end
+            end
+            -- a new mode takes back the slots its set names: picks there go (/mw Naegling, then /wm Tizona: Tizona)
+            local mode = gcdisplay.GetCycle('Weapons')
+            if (cname == 'Weapons') and (mode ~= modeBefore) and gcinclude.IsWeaponValue(mode) then
+                local set = modeSet(mode)
+                for k, _ in pairs((type(set) == 'table') and set or {}) do
+                    local slot = gcinclude.WeaponSlotNames[slotOf(k) or 0]
+                    if (slot ~= nil) and (not setNow[slot]) and gcinclude.IsWeaponValue(gcdisplay.GetCycle(slot)) then
+                        gcinclude.SetWeaponCycle(slot, 'None', true)
+                    end
                 end
             end
             -- force re-applies the current weapons: a lock may have kept them off
@@ -935,13 +961,7 @@ do
             local equip = {}
             local mode = gcdisplay.GetCycle('Weapons')
             if gcinclude.IsWeaponValue(mode) then
-                -- /mset variant first: Weapon_Carnwenhan_Acc or Weapon_CarnwenhanAcc while /mset Acc, when you have one
-                local set = nil
-                local ms = gcdisplay.GetCycle('MeleeSet')
-                if (type(ms) == 'string') and (ms ~= 'Default') then
-                    set = gcinclude.WeaponSetFor(mode .. '_' .. ms) or gcinclude.WeaponSetFor(mode .. ms)
-                end
-                if set == nil then set = gcinclude.WeaponSetFor(mode) end
+                local set = modeSet(mode)
                 if set == nil then
                     if gcinclude.MissingWarned[mode] == nil then
                         gcinclude.MissingWarned[mode] = true
