@@ -537,6 +537,30 @@ local function modes_splice(s, base, adds, out)
     return true
 end
 
+-- The /mset modes: the file's gcinclude.MeleeModes list, else GoomSwap's own (gcinclude.SetVariables), then extra.
+local function melee_modes_of(s, extra)
+    local out = {}
+    local list = string.match(s or '', '\n%s*gcinclude%.MeleeModes%s*=%s*T?(%b{})')
+    for _, m in string.gmatch(list or '', "(['\"])(.-)%1") do out[#out + 1] = m end
+    if #out == 0 then out = { 'Default', 'SubtleBlow', 'Acc' } end
+    for _, m in ipairs(extra or {}) do out[#out + 1] = m end
+    return out
+end
+
+-- Whether name is one of Weapon_<mode>'s own sets, worn in its place: _1h (no dual wield), _<mset> or <mset>
+-- (Weapon_Mpu_Acc, Weapon_MpuAcc: the engine reads both), each with _1h too. msets: the /mset modes.
+local function weapon_variant_of(name, mode, msets)
+    local rest, lm = string.match(string.lower(name or ''), '^weapon_(.+)$'), string.lower(mode or '')
+    if (rest == nil) or (lm == '') or (rest == lm) or (string.sub(rest, 1, #lm) ~= lm) then return false end
+    local tail = (string.gsub(string.sub(rest, #lm + 1), '_1h$', ''))
+    tail = (string.gsub(tail, '^_', ''))
+    if tail == '' then return true end
+    for _, m in ipairs(msets or {}) do
+        if string.lower(m) == tail then return true end
+    end
+    return false
+end
+
 -- Register newly saved top-level Weapon_ sets in /wm, without touching the
 -- current mode, default, or any existing list entry. Variants are not modes.
 local WEAPON_VARIANTS = {
@@ -545,7 +569,7 @@ local WEAPON_VARIANTS = {
     ['dt'] = true, ['pdt'] = true, ['mdt'] = true, ['idle'] = true,
     ['hybrid'] = true, ['def'] = true, ['eva'] = true,
 }
-local function weapon_mode(name, existing)
+local function weapon_mode(name, existing, msets)
     local mode = type(name) == 'string' and string.match(name, '^Weapon_(.+)$')
     if not mode or mode == '' then return nil end
     local lower = string.lower(mode)
@@ -557,21 +581,23 @@ local function weapon_mode(name, existing)
         local stem = string.lower(base)
         local tail = string.sub(lower, #stem + 1)
         if string.sub(lower, 1, #stem) == stem and WEAPON_VARIANTS[tail] then return nil end
+        if weapon_variant_of(name, base, msets) then return nil end -- Weapon_MpuSubtleBlow: Mpu with /mset
     end
     local suffix = string.match(lower, '_([^_]+)$')
     if suffix and WEAPON_VARIANTS[suffix] then return nil end
     return mode
 end
 
-local function weapon_modes_splice(s, newSets, out)
+local function weapon_modes_splice(s, newSets, out, newModes)
     if #newSets == 0 then return true, {} end
+    local msets = melee_modes_of(s, newModes)
     local p, pre, list, names, seen = list_line(s, 'WeaponModes')
     if p == nil then -- no list in the file: one before Initialize, None first as the runtime default
         names, seen = { 'None' }, { none = true }
     end
     local adds = {}
     for _, set in ipairs(newSets) do
-        local mode = (set.parentName == nil) and weapon_mode(set.name, names) or nil
+        local mode = (set.parentName == nil) and weapon_mode(set.name, names, msets) or nil
         if mode and not seen[string.lower(mode)] then
             adds[#adds + 1], names[#names + 1], seen[string.lower(mode)] = mode, mode, true
         end
@@ -1304,6 +1330,8 @@ return {
     QuoteText = quote_text,
     OrderWeaponModes = weapon_modes_ordered,
     ModeMentions = mode_mentions,
+    MeleeModes = melee_modes_of,
+    WeaponVariantOf = weapon_variant_of,
     RemoveWeaponModes = weapon_modes_without,
     AddNewSets = new_set_splices,
     AddRenames = rename_all,

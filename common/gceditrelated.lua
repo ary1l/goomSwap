@@ -95,6 +95,168 @@ local function draw_wm_order(set)
     end)
 end
 
+-- == Weapon sets for a /wm mode: every set the mode can have, the missing ones to tick and make. ==
+-- weapon: Weapon_<mode>_1h (no dual wield) and Weapon_<mode><mset> (and _1h), worn whole in place of
+--   Weapon_<mode>, so they start as its copy (then change the Sub); spelled like the file's own (Weapon_MpuAcc, or
+--   Weapon_Mpu_Acc when the file has no joined one).
+-- layer: each set worn over a base while the mode is on (Tp_<mode> over Tp_Default, Tp_<mode>_Acc over Tp_Acc,
+--   Savage Blade_<mode>, Idle_<mode>, Dt_<mode>...), empty unless asked: only what differs goes in, so the base's
+--   later edits still apply.
+
+-- The mode a set is the Weapon_ set of (Weapon_Mpu: Mpu), else nil: not a variant (Weapon_MpuAcc), not deleted.
+local function weapon_set_mode(set)
+    local m = (set ~= nil) and (set.parentName == nil) and string.match(set.name, '^Weapon_([^_]+)$') or nil
+    if (m == nil) or editorState.document.deleted[set.name] or (ctx.actions == nil) then return nil end
+    for _, w in ipairs(ctx.actions.WeaponModes()) do
+        if string.lower(w) == string.lower(m) then return m end
+    end
+    return nil
+end
+ctx.weapon_set_mode = weapon_set_mode
+
+local function weapon_set_rows(mode)
+    local doc, lm, rows = editorState.document, string.lower(mode), {}
+    local msets = setFile.MeleeModes(doc.model.text, doc.newModes)
+    local by = doc.model.byLower
+    local function have(...)
+        for _, n in ipairs({ ... }) do
+            local s = by[string.lower(n)]
+            if (s ~= nil) and not doc.deleted[s.name] then return true end
+        end
+        return false
+    end
+    -- the file's spelling of a weapon set for an /mset mode: joined when any mode's is (Weapon_CarnwenhanAcc)
+    local joined = false
+    for _, s in ipairs(doc.model.list) do
+        local rest = string.match(s.lname, '^weapon_(.+)$')
+        if (rest ~= nil) and (s.parentName == nil) then
+            local r = (string.gsub(rest, '_1h$', ''))
+            for _, ms in ipairs(msets) do
+                local l = string.lower(ms)
+                if (#r > #l) and (string.sub(r, -#l) == l) and (string.sub(r, -#l - 1, -#l - 1) ~= '_')
+                    and (by['weapon_' .. string.sub(r, 1, #r - #l)] ~= nil) then
+                    joined = true
+                end
+            end
+        end
+    end
+    local function weapon(name, alt, why)
+        rows[#rows + 1] = { name = name, kind = 'weapon', why = why, have = have(name, alt or name) }
+    end
+    weapon('Weapon_' .. mode .. '_1h', nil, "when you can't dual wield")
+    for _, ms in ipairs(msets) do
+        if string.lower(ms) ~= 'default' then
+            local j, u = 'Weapon_' .. mode .. ms, 'Weapon_' .. mode .. '_' .. ms
+            local name, alt = joined and j or u, joined and u or j
+            weapon(name, alt, 'with /mset ' .. ms)
+            weapon(name .. '_1h', alt .. '_1h', 'with /mset ' .. ms .. ", when you can't dual wield")
+        end
+    end
+    local seen, layers = {}, {}
+    for _, s in ipairs(doc.model.list) do
+        if (s.parentName == nil) and not doc.deleted[s.name] and not string.match(s.lname, '^weapon_') then
+            local name = ctx.actions.VariantName(s, mode)
+            if (name ~= nil) and not seen[string.lower(name)] then
+                seen[string.lower(name)] = true
+                layers[#layers + 1] = { name = name, kind = 'layer', base = s, why = 'over ' .. s.name,
+                    have = have(name), at = #layers + 1 }
+            end
+        end
+    end
+    local place = {} -- the headings in the list's order; a layer goes under its base's
+    for i, h in ipairs(ctx.headings.order()) do place[h] = i end
+    table.sort(layers, function(a, b)
+        local pa, pb = place[a.base.group] or 999, place[b.base.group] or 999
+        if pa ~= pb then return pa < pb end
+        return a.at < b.at
+    end)
+    for _, r in ipairs(layers) do rows[#rows + 1] = r end
+    for _, r in ipairs(rows) do r.tick = { false } end
+    return rows
+end
+
+local function draw_weapon_sets()
+    local ui = editorState.ui
+    if ui.requestWeaponSets ~= nil then
+        local mode = ui.requestWeaponSets
+        ui.requestWeaponSets, ui.weaponSets = nil, { mode = mode, copy = { false }, rows = weapon_set_rows(mode),
+            base = editorState.document.model.byLower['weapon_' .. string.lower(mode)] }
+        imgui.OpenPopup('##gcedit_weapon_sets')
+    end
+    if not imgui.BeginPopup('##gcedit_weapon_sets') then return end
+    local W = ui.weaponSets
+    if W ~= nil then
+        local filled = (W.base ~= nil) and (current(W.base, 'Main') ~= nil) -- weapon sets copy it: needs its Main
+        imgui.TextColored(palette.section, 'Weapon sets for /wm ' .. W.mode)
+        imgui.PushTextWrapPos(520)
+        imgui.TextColored(palette.dim, 'Tick the ones whose gear should differ, then Make. Nothing is written until '
+            .. 'Save + reload.')
+        imgui.PopTextWrapPos()
+        imgui.Checkbox('Layers start as a copy of their base##gcws_copy', W.copy)
+        if imgui.IsItemHovered() then
+            set_tip('Off (the default): a layer starts empty; fill only what differs, and later changes to its base '
+                .. 'still apply.\nOn: a full copy, which then no longer follows its base.')
+        end
+        if imgui.SmallButton('All##gcws_all') then
+            for _, r in ipairs(W.rows) do r.tick[1] = (not r.have) and ((r.kind == 'layer') or filled) end
+        end
+        imgui.SameLine()
+        if imgui.SmallButton('None##gcws_none') then
+            for _, r in ipairs(W.rows) do r.tick[1] = false end
+        end
+        local lh = (imgui.GetFrameHeightWithSpacing ~= nil) and imgui.GetFrameHeightWithSpacing() or 24
+        local borders = ImGuiChildFlags_Borders or ImGuiChildFlags_Border or 1
+        imgui.BeginChild('##gcws_list', { 520, math.min(360, (#W.rows + 8) * lh) }, borders)
+        local group = nil
+        for i, r in ipairs(W.rows) do
+            local g = (r.kind == 'weapon') and ('Weapon sets (start as a copy of Weapon_' .. W.mode .. ')')
+                or ('Layers: ' .. r.base.group)
+            if g ~= group then
+                group = g
+                imgui.TextColored(palette.section, g)
+                if (r.kind == 'weapon') and not filled then
+                    imgui.TextColored(palette.warn, '  Fill Weapon_' .. W.mode .. "'s Main first: these copy it.")
+                end
+            end
+            if r.have then
+                imgui.TextColored(palette.dim, '  ' .. r.name .. '  (have)')
+            else
+                local off = (r.kind == 'weapon') and not filled
+                local disabled = off and (imgui.BeginDisabled ~= nil)
+                if disabled then imgui.BeginDisabled() end
+                imgui.Checkbox(r.name .. '##gcws' .. i, r.tick)
+                if disabled then imgui.EndDisabled() end
+                if off then r.tick[1] = false end
+            end
+            imgui.SameLine()
+            imgui.TextColored(palette.dim, r.why)
+        end
+        imgui.EndChild()
+        local n = 0
+        for _, r in ipairs(W.rows) do
+            if r.tick[1] and not r.have then n = n + 1 end
+        end
+        if make_button('Make ' .. n .. '##gcws_make') and (n > 0) then
+            for _, r in ipairs(W.rows) do
+                if r.tick[1] and not r.have and not has_set(r.name) then
+                    local from = (r.kind == 'weapon') and W.base or (W.copy[1] and r.base or nil)
+                    make_set(r.name, from, true)
+                    local s, anchor = editorState.document.model.byName[r.name], from or r.base
+                    if (s ~= nil) and (s.after == nil) and (anchor ~= nil) and not anchor.new then
+                        s.after = anchor.name -- next to its base in the file
+                    end
+                end
+            end
+            feedback('Made ' .. n .. ' set' .. ((n == 1) and '' or 's') .. ' for /wm ' .. W.mode
+                .. ' (unsaved): fill what differs, then Save + reload.')
+            imgui.CloseCurrentPopup()
+        end
+        imgui.SameLine()
+        if imgui.Button('Cancel##gcws_cancel') then imgui.CloseCurrentPopup() end
+    end
+    imgui.EndPopup()
+end
+
 -- Every set GoomSwap could put on for this set's action, grouped by what has to be on for it, have or missing.
 local function draw_over(set)
     local wi = editorState.ui.wi
@@ -1087,6 +1249,10 @@ local function draw_context_menu()
             end)
             draw_weapon_copies(set)
             draw_wm_order(set)
+            local wmode = weapon_set_mode(set)
+            if (wmode ~= nil) and item('Weapon sets for /wm ' .. wmode .. '...##gcws_menu') then
+                editorState.ui.requestWeaponSets = wmode
+            end
             imgui.Separator()
             set_action_entries(set, 'drop')
         else
@@ -1194,6 +1360,7 @@ local function rename_new(set, new)
 end
 
     return { draw_over = draw_over, draw_picker = draw_picker, fill_list = fill_list, draw_fill = draw_fill,
+        draw_weapon_sets = draw_weapon_sets,
         draw_context_menu = draw_context_menu, variants_of = variants_of, rename_problem = rename_problem,
         rename_new = rename_new }
 end

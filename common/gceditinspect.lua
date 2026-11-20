@@ -924,6 +924,15 @@ local function draw_set(set)
     end
     if imgui.IsItemHovered() then set_tip('Outline the slots where this set and another differ.') end
     editorPanels.SameLineIfFits(imgui, 140)
+    local wmode = (ctx.weapon_set_mode ~= nil) and ctx.weapon_set_mode(set) or nil
+    if wmode ~= nil then -- a /wm mode's set: its _1h and /mset weapon sets, and the layers over Tp_Default...
+        if imgui.Button('Weapon sets...##gcws_open') then editorState.ui.requestWeaponSets = wmode end
+        if imgui.IsItemHovered() then
+            set_tip('Every set /wm ' .. wmode .. ' can have (Weapon_' .. wmode .. '_1h, its /mset weapon sets, '
+                .. 'Tp_' .. wmode .. ' over Tp_Default...): tick the missing ones and make them.')
+        end
+        editorPanels.SameLineIfFits(imgui, 140)
+    end
     if draw_set_actions(set) then return end
     help(
         '- Click a slot: pick gear for it on the right.\n'

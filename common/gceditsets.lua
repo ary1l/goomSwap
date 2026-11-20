@@ -312,7 +312,7 @@ local function save()
             return
         end
     end
-    if not setFile.AddWeaponModes(disk, editorState.document.newSets, splices) then
+    if not setFile.AddWeaponModes(disk, editorState.document.newSets, splices, editorState.document.newModes) then
         editorState.ui.notice, editorState.ui.noticeBad =
             'Not saved: no gcinclude.Initialize() line to register new weapon modes.', true
         return
