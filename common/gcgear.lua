@@ -1,6 +1,7 @@
 -- /gcgear: the gear you have on, 4x4 in the game's equipment-window order (as atom0s' equipmon): icons, the ammo
--- count, a red X on a slot the game has encumbered. A slot's border says what keeps it: red your /lock, amber the TP
--- hold, purple Aminon, Hoxne, /proc, an item use (/gce) or a hold (/capacity...); a pink corner: it still needs RP.
+-- count, a red X on a slot the game has encumbered. A padlock (top left) says what keeps it: red your /lock, amber the
+-- TP hold, purple Aminon, Hoxne, /proc, an item use (/gce) or a hold (/capacity...); a pink corner: it still needs RP.
+-- No borders: some item icons have their own coloured frame.
 -- Hover a slot: the item, the set that put it on, who holds it. Colours: the bar's colour preset (gcdisplay.Theme).
 -- Every box also shares its slots (luashitacast\hud\<Name>.gear): in the /gchud drop, hover a box's name for its
 -- grid (gcgear.AltTip).
@@ -311,7 +312,20 @@ local function details(c)
     line('Ctrl+click: ' .. (mine and '/unlock ' or '/lock ') .. string.lower(c.name), COL_DIM)
 end
 
--- One slot's marks over its icon: encumbrance X, holder border, RP corner, ammo count.
+-- A padlock at ox, oy, s px tall, in col, outlined dark so it reads over any icon.
+local function padlock(dl, ox, oy, s, col)
+    local dark, th = u32(OUTLINE), math.max(1.5, s / 7)
+    -- the body, and the shackle above it (its lower edge drawn over by the body)
+    local bx1, by1, bx2, by2 = ox, oy + s * 0.45, ox + s * 0.8, oy + s
+    local sx1, sy1, sx2, sy2, r = ox + s * 0.18, oy, ox + s * 0.62, oy + s * 0.62, s * 0.25
+    dl:AddRect(va(sx1, sy1), vb(sx2, sy2), dark, r, 0, th + 2)
+    dl:AddRectFilled(va(bx1 - 1, by1 - 1), vb(bx2 + 1, by2 + 1), dark, 2)
+    local fill = u32(col)
+    dl:AddRect(va(sx1, sy1), vb(sx2, sy2), fill, r, 0, th)
+    dl:AddRectFilled(va(bx1, by1), vb(bx2, by2), fill, 1.5)
+    dl:AddCircleFilled(va((bx1 + bx2) / 2, (by1 + by2) / 2), math.max(1, s / 9), dark, 8) -- keyhole
+end
+-- One slot's marks over its icon: encumbrance X, holder padlock, RP corner, missed '!', ammo count.
 local function marks(dl, c, x, y, cell)
     local x2, y2 = x + cell, y + cell
     if c.enc then -- equipmon's mark: the slot dimmed, a red X
@@ -321,7 +335,7 @@ local function marks(dl, c, x, y, cell)
         dl:AddLine(va(x2 - m, y + m), vb(x + m, y2 - m), u32(COL.lock), th)
     end
     local h = c.holder
-    if (h ~= nil) then dl:AddRect(va(x + 1, y + 1), vb(x2 - 1, y2 - 1), u32(COL[h]), 3, 0, 2) end
+    if (h ~= nil) then padlock(dl, x + 2, y + 2, math.max(9, math.floor(cell * 0.36)), COL[h]) end
     if (c.rp ~= nil) and c.rp.unfinished then -- a quarter circle in the top right corner
         local r = math.max(4, math.floor(cell * 0.30))
         if (dl.PushClipRect ~= nil) and (dl.PopClipRect ~= nil) then
