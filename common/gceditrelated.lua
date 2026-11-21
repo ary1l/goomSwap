@@ -698,6 +698,9 @@ local function draw_picker(set)
     end
     imgui.PushItemWidth(-1)
     imgui.InputTextWithHint('##gcedit_search', 'Search name or augment', editorState.ui.search, 96)
+    if imgui.IsItemHovered() then
+        set_tip('3+ letters also finds items you do not own (after yours, marked not owned), to plan a set.')
+    end
     imgui.PopItemWidth()
     if editorState.ui.search[1] ~= '' then
         if imgui.SmallButton('Clear search##gear') then editorState.ui.search[1] = '' end
@@ -709,12 +712,12 @@ local function draw_picker(set)
     imgui.Checkbox('Needs RP##picker', editorState.ui.rpOnly)
     editorPanels.SameLineIfFits(imgui, text_w('Augmented') + 36)
     imgui.Checkbox('Augmented##picker', editorState.ui.augOnly)
-    editorPanels.SameLineIfFits(imgui, text_w('All items') + 36)
-    imgui.Checkbox('All items##picker', editorState.ui.allItems)
-    if imgui.IsItemHovered() then set_tip('Also every item you do not own, to plan a set (shown as not owned).') end
-    local allReady = editorState.ui.allItems[1] and index_all_items()
-    if editorState.ui.allItems[1] and not allReady then
-        imgui.TextColored(palette.dim, string.format('Indexing items... %d%%',
+    -- a search of 3+ letters also lists items you don't own (every equippable item, indexed the first time)
+    local find = string.lower(editorState.ui.search[1] or '')
+    local wantAll = (#(string.gsub(find, '%s', '')) >= 3)
+    local allReady = wantAll and index_all_items()
+    if wantAll and not allReady then
+        imgui.TextColored(palette.dim, string.format('Looking through every item... %d%%',
             math.floor(allItems.nextId * 100 / 65535)))
     end
     if editorState.ui.anyJob[1] or editorState.ui.wardOnly[1] or editorState.ui.rpOnly[1] or editorState.ui.augOnly[1]
@@ -726,7 +729,6 @@ local function draw_picker(set)
                 false, false, false, false, ''
         end
     end
-    local find = string.lower(editorState.ui.search[1] or '')
     -- the rows that fit, rebuilt only when the slot, the filters or the bags change; copies alike in every way
     -- (name, augments, path) share a row that names each bag
     local pkey = table.concat({
