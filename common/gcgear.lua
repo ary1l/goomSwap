@@ -106,12 +106,15 @@ end
 
 -- Rank (RP) progress of an equipped item: the editor's decoders (gcaugments), rank and cap only.
 local augmentInfo, NO_BUNDLES = nil, {}
-local function rank_of(it)
+local function aug_mod()
     if (augmentInfo == nil) then
         local ok, m = pcall(gFunc.LoadFile, 'common\\gcaugments.lua')
         augmentInfo = (ok and (type(m) == 'table')) and m or false
     end
-    if not augmentInfo then return nil end
+    return augmentInfo
+end
+local function rank_of(it)
+    if not aug_mod() then return nil end
     local a = augmentInfo.Read(it, gData.GetAugment)
     local ranked = augmentInfo.Rank.Read(it.Extra, NO_BUNDLES)
     if (ranked ~= nil) then a.rank, a.cap = ranked.rank, ranked.cap end
@@ -580,7 +583,7 @@ local PAD, NO_PAD, CLEAR, FLAGS = { 4, 4 }, { 0, 0 }, { 0, 0, 0, 0 }, nil
 -- Put item in c's slot now ('remove': take it off) and keep it there with your /lock, so the next swap doesn't put
 -- the set's piece back; /unlock lets sets swap it again. Not over another owner's lock or encumbrance; a TP-held
 -- weapon only once it is your /lock (Ctrl+click), so a click never costs your TP by itself.
-local function wear(c, item)
+local function wear(c, item, label) -- item: a name, 'remove' or a LAC item table; label: what chat calls it
     if encumbered(c.game) then inc.Err(c.name .. ' is encumbered'); return end
     local owners = inc.LockedSlots[c.slot] or {}
     for o in pairs(owners) do
@@ -599,8 +602,8 @@ local function wear(c, item)
     gState.Disabled[c.slot] = false
     gFunc.ForceEquipSet({ [c.name] = item })
     inc.LockSlots({ c.slot }, 'user')
-    inc.Say(c.name .. ': ' .. ((item == 'remove') and 'off' or item) .. ', locked (/unlock '
-        .. string.lower(c.name) .. ' to let sets swap it)')
+    local said = label or ((item == 'remove') and 'off') or ((type(item) == 'table') and tostring(item.Name)) or item
+    inc.Say(c.name .. ': ' .. tostring(said) .. ', locked (/unlock ' .. string.lower(c.name) .. ' to let sets swap it)')
 end
 -- Shift+click: your gear that fits the slot, from the bags LAC equips from, wearable by this job at this level.
 local pick = { cell = nil, list = nil }
@@ -609,7 +612,12 @@ local function gear_for(c)
     local inv, res = AshitaCore:GetMemoryManager():GetInventory(), AshitaCore:GetResourceManager()
     local p = AshitaCore:GetMemoryManager():GetPlayer()
     local job, lv, bitSlot = p:GetMainJob(), tonumber(p:GetMainJobLevel()) or 99, bit.lshift(1, c.game)
-    local byName, list = {}, {}
+    -- the worn copy (bag, index): its row is the one tagged worn
+    local we = inv:GetEquippedItem(c.game)
+    local wornAt = ((we ~= nil) and (bit.band(we.Index, 0x00FF) ~= 0))
+        and ((bit.band(we.Index, 0xFF00) / 256) * 1000 + bit.band(we.Index, 0x00FF)) or nil
+    local aug = aug_mod()
+    local byKey, versions, list = {}, {}, {}
     for _, b in pairs(bags) do
         for i = 1, (gData.GetContainerMax(b) or 0) do
             local it = inv:GetContainerItem(b, i)
@@ -619,24 +627,59 @@ local function gear_for(c)
                 and (bit.band(tonumber(r.Slots) or 0, bitSlot) ~= 0)
                 and (bit.band(tonumber(r.Jobs) or 0, bit.lshift(1, job)) ~= 0)
                 and ((tonumber(r.Level) or 0) <= lv) then
-                local key = string.lower(r.Name[1])
-                local e = byName[key]
+                -- copies alike (name, augment path, augments: as /gcedit tells them apart) share a row
+                local info = aug and aug.Read(it, gData.GetAugment) or { augs = {} }
+                local lname = string.lower(r.Name[1])
+                local key = lname .. '\0' .. tostring(info.path or '') .. '\0' .. table.concat(info.augs or {}, '\0')
+                local e = byKey[key]
                 if (e == nil) then
-                    e = { name = r.Name[1], id = it.Id, bag = BAG_NAME[b] or tostring(b), n = 0 }
-                    byName[key] = e
+                    -- shown in the item's own order (main stat first); info.augs is sorted, for the key
+                    local okD, d, shown = false, nil, {}
+                    if aug then okD, d = pcall(gData.GetAugment, it) end
+                    if okD and (type(d) == 'table') and (type(d.Augs) == 'table') then
+                        for _, v in ipairs(d.Augs) do
+                            local t = (type(v) == 'table') and v.String or v
+                            if (type(t) == 'string') and (t ~= '') then shown[#shown + 1] = t end
+                        end
+                    end
+                    e = { name = r.Name[1], lname = lname, id = it.Id, bag = BAG_NAME[b] or tostring(b), n = 0,
+                        path = info.path, augs = info.augs or {} }
+                    e.shown = (#shown > 0) and shown or e.augs
+                    byKey[key] = e
                     list[#list + 1] = e
+                    versions[lname] = (versions[lname] or 0) + 1
                 end
                 e.n = e.n + 1
+                if (wornAt == b * 1000 + i) then e.worn = true end
             end
         end
     end
-    table.sort(list, function (a, b2) return string.lower(a.name) < string.lower(b2.name) end)
+    -- A name with more than one version: each row says which (its path, else its augments) and wears that one,
+    -- as LAC names it ({ Name, AugPath } or { Name, Augment }); a single version: the name alone.
+    for _, e in ipairs(list) do
+        e.item = e.name
+        if ((versions[e.lname] or 0) > 1) then
+            if (e.path ~= nil) and (e.path ~= '') then
+                e.detail, e.item = 'Path ' .. tostring(e.path), { Name = e.name, AugPath = e.path }
+            elseif (#e.augs > 0) then
+                -- LAC's CheckAugments wants each listed augment on the item, in any order
+                e.detail, e.item = table.concat(e.shown, ', '), { Name = e.name, Augment = e.augs }
+            else
+                e.detail = 'no augments'
+            end
+        end
+    end
+    table.sort(list, function (a, b2)
+        if (a.lname ~= b2.lname) then return a.lname < b2.lname end
+        return tostring(a.detail) < tostring(b2.detail)
+    end)
     return list
 end
 -- The list, drawn like the bar's right-click menus: dark and rounded, a soft hover; each row the item's icon, its
 -- name, the bag on the right; the worn one outlined and tagged. Opens beside the grid (its right, else its left).
 local PICK_ICON, PICK_ROWS, PICK_GAP, PICK_IN, SCROLL_W = 20, 14, 8, 4, 8 -- PICK_IN: the row's inner left margin
 local PICK_HINT = 'click: wear it, keeps it (/lock)'
+local DETAIL_MAX = 34 -- characters of a version's augments shown on its row
 local MENU_PAD, MENU_SPACE = { 8, 6 }, { 6, 2 }
 local COL_HOVER, COL_NONE, COL_LINE = { 1, 1, 1, 0.12 }, { 0, 0, 0, 0 }, { 1, 1, 1, 0.12 }
 local WORN_FILL, WORN_EDGE = { 0.62, 0.68, 0.80, 0.10 }, { 0.62, 0.68, 0.80, 0.75 }
@@ -646,7 +689,11 @@ local function pick_layout(c, wx, wy, ww)
     local nameW, bagW = textw('Take it off'), 0
     for _, e in ipairs(pick.list) do
         e.label = e.name .. ((e.n > 1) and (' x' .. e.n) or '')
-        nameW, bagW = math.max(nameW, textw(e.label)), math.max(bagW, textw(e.bag))
+        if (e.detail ~= nil) then -- which version, cut short (hover a row for all of it)
+            e.short = (#e.detail > DETAIL_MAX) and (string.sub(e.detail, 1, DETAIL_MAX - 2) .. '..') or e.detail
+        end
+        nameW = math.max(nameW, textw(e.label) + ((e.short ~= nil) and (10 + textw(e.short)) or 0))
+        bagW = math.max(bagW, textw(e.bag))
     end
     local tagW = textw('worn') + 8
     pick.rowW = math.max(textw(c.name) + textw(PICK_HINT) + 24,
@@ -673,12 +720,13 @@ local function pick_row(dl, c, i, e) -- e: an item of pick.list, or 'off' (take 
     local ix = x + PICK_IN -- the icon
     local lh = imgui.GetTextLineHeight()
     local ty, tx = y + math.floor((PICK_ICON - lh) / 2), ix + PICK_ICON + PICK_GAP
-    local worn = (not off) and (c.item ~= nil) and (string.lower(c.item) == string.lower(e.name))
+    local worn = (not off) and (e.worn == true)
     if worn then
         dl:AddRectFilled(va(x, y - 1), vb(x2, y2 + 1), u32(WORN_FILL), 7)
         dl:AddRect(va(x, y - 1), vb(x2, y2 + 1), u32(WORN_EDGE), 7, 0, 1)
     end
-    if imgui.IsItemHovered() then dl:AddRectFilled(va(x, y - 1), vb(x2, y2 + 1), u32(COL_HOVER), 7) end
+    local hovered = imgui.IsItemHovered()
+    if hovered then dl:AddRectFilled(va(x, y - 1), vb(x2, y2 + 1), u32(COL_HOVER), 7) end
     if off then -- a red X where the icon goes
         local m = 5
         dl:AddLine(va(ix + m, y + m), vb(ix + PICK_ICON - m, y + PICK_ICON - m), u32(COL.lock), 2)
@@ -687,6 +735,15 @@ local function pick_row(dl, c, i, e) -- e: an item of pick.list, or 'off' (take 
         return clicked
     end
     dl:AddText(va(tx, ty), u32(COL_HEAD), e.label)
+    if (e.short ~= nil) then
+        dl:AddText(va(tx + textw(e.label) + 10, ty), u32(COL_DIM), e.short)
+        if hovered and (#e.augs > 0) then -- every augment of this version
+            tooltip(function()
+                line(e.name .. ((e.path ~= nil) and (' (Path ' .. tostring(e.path) .. ')') or ''), COL_HEAD)
+                for _, a in ipairs(e.shown) do line(a, COL_KEY) end
+            end)
+        end
+    end
     local bx = x2 - 8 - textw(e.bag)
     dl:AddText(va(bx, ty), u32(COL_DIM), e.bag)
     if worn then
@@ -707,8 +764,8 @@ local function pick_body()
     end
     imgui.Separator()
     budget = ICONS_PER_FRAME
-    local picked = nil
-    if (c.id ~= 0) and pick_row(dl, c, 0, 'off') then picked = 'remove' end
+    local picked, label = nil, nil
+    if (c.id ~= 0) and pick_row(dl, c, 0, 'off') then picked, label = 'remove', 'off' end
     if (#pick.list == 0) then line('Nothing in your equip bags fits it for this job.', COL_DIM) end
     local child = (#pick.list > PICK_ROWS)
     if child then
@@ -716,11 +773,13 @@ local function pick_body()
         dl = imgui.GetWindowDrawList()
     end
     for i, e in ipairs(pick.list) do
-        if pick_row(dl, c, i, e) then picked = e.name end
+        if pick_row(dl, c, i, e) then
+            picked, label = e.item, e.name .. ((e.short ~= nil) and (' (' .. e.short .. ')') or '')
+        end
     end
     if child then imgui.EndChild() end
     if (picked ~= nil) then
-        wear(c, picked)
+        wear(c, picked, label)
         imgui.CloseCurrentPopup()
     end
 end

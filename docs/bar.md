@@ -89,7 +89,9 @@ Storage...; LAC's `EquipBags`), your job can't wear it, or it needs a higher lev
 **Right-click** a slot: `/gcedit` on the set that put it on (or asked for it), that slot selected. **Ctrl+click**:
 `/lock` that slot, again to `/unlock` it. **Alt+click**: take it off. **Shift+click**: a list beside the grid of
 your gear that fits the slot (from the bags LAC equips from, for this job and level; its bag on the right, the worn
-one tagged, *Take it off* first); click one to wear it. Both keep the slot as you left it with
+one tagged, *Take it off* first); click one to wear it. An item you have in more than one version (augments or
+path, e.g. JSE capes) gets a row per version with its augments, main stat first (hover a row for all of them), and
+that exact copy is the one put on. Both keep the slot as you left it with
 your `/lock` (else the next swap would put the set's piece back): `/unlock <slot>` hands it back to your sets. They
 won't change a slot another feature holds (its off command is named) or a weapon held for your TP (Ctrl+click it
 first).
