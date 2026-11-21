@@ -635,11 +635,12 @@ local function gear_for(c)
 end
 -- The list, drawn like the bar's right-click menus: dark and rounded, a soft hover; each row the item's icon, its
 -- name, the bag on the right; the worn one outlined and tagged. Opens beside the grid (its right, else its left).
-local PICK_ICON, PICK_ROWS, PICK_GAP = 20, 14, 8
+local PICK_ICON, PICK_ROWS, PICK_GAP, PICK_IN, SCROLL_W = 20, 14, 8, 4, 8 -- PICK_IN: the row's inner left margin
 local PICK_HINT = 'click: wear it, keeps it (/lock)'
 local MENU_PAD, MENU_SPACE = { 8, 6 }, { 6, 2 }
 local COL_HOVER, COL_NONE, COL_LINE = { 1, 1, 1, 0.12 }, { 0, 0, 0, 0 }, { 1, 1, 1, 0.12 }
 local WORN_FILL, WORN_EDGE = { 0.62, 0.68, 0.80, 0.10 }, { 0.62, 0.68, 0.80, 0.75 }
+local SCROLL_GRAB, SCROLL_HOVER = { 1, 1, 1, 0.20 }, { 1, 1, 1, 0.35 }
 -- Row width from the texts, and the spot beside the grid window (x, y, width), kept while the list is open.
 local function pick_layout(c, wx, wy, ww)
     local nameW, bagW = textw('Take it off'), 0
@@ -648,8 +649,9 @@ local function pick_layout(c, wx, wy, ww)
         nameW, bagW = math.max(nameW, textw(e.label)), math.max(bagW, textw(e.bag))
     end
     local tagW = textw('worn') + 8
-    pick.rowW = math.max(textw(c.name) + textw(PICK_HINT) + 24, PICK_ICON + PICK_GAP + nameW + 16 + tagW + 8 + bagW + 6)
-    local w = pick.rowW + 2 * MENU_PAD[1] + ((#pick.list > PICK_ROWS) and 14 or 0)
+    pick.rowW = math.max(textw(c.name) + textw(PICK_HINT) + 24,
+        PICK_IN + PICK_ICON + PICK_GAP + nameW + 16 + tagW + 8 + bagW + 8)
+    local w = pick.rowW + 2 * MENU_PAD[1] + ((#pick.list > PICK_ROWS) and (SCROLL_W + 2) or 0)
     local ok, sw = pcall(function() return imgui.GetMainViewport().Size.x end)
     sw = ok and tonumber(sw) or 1920
     local px = wx + ww + 6
@@ -660,28 +662,32 @@ local function pick_row(dl, c, i, e) -- e: an item of pick.list, or 'off' (take 
     local x, y = xy(imgui.GetCursorScreenPos())
     local off = (e == 'off')
     local t = (not off) and icon(e.id) or nil
+    imgui.Dummy(size(PICK_IN, PICK_ICON)) -- the margin inside the row's hover (kept inside a scrolling list's edge)
+    imgui.SameLine(0, 0)
     if (t ~= nil) then imgui.Image(t.id, size(PICK_ICON, PICK_ICON)) else imgui.Dummy(size(PICK_ICON, PICK_ICON)) end
     imgui.SameLine(0, PICK_GAP)
-    local clicked = imgui.Selectable('##gcgp' .. i, false, 0, size(pick.rowW - PICK_ICON - PICK_GAP, PICK_ICON))
+    local clicked = imgui.Selectable('##gcgp' .. i, false, 0,
+        size(pick.rowW - PICK_IN - PICK_ICON - PICK_GAP, PICK_ICON))
     if (x == nil) or (y == nil) then return clicked end
     local x2, y2 = x + pick.rowW, y + PICK_ICON
+    local ix = x + PICK_IN -- the icon
     local lh = imgui.GetTextLineHeight()
-    local ty, tx = y + math.floor((PICK_ICON - lh) / 2), x + PICK_ICON + PICK_GAP
+    local ty, tx = y + math.floor((PICK_ICON - lh) / 2), ix + PICK_ICON + PICK_GAP
     local worn = (not off) and (c.item ~= nil) and (string.lower(c.item) == string.lower(e.name))
     if worn then
-        dl:AddRectFilled(va(x - 4, y - 1), vb(x2 + 4, y2 + 1), u32(WORN_FILL), 7)
-        dl:AddRect(va(x - 4, y - 1), vb(x2 + 4, y2 + 1), u32(WORN_EDGE), 7, 0, 1)
+        dl:AddRectFilled(va(x, y - 1), vb(x2, y2 + 1), u32(WORN_FILL), 7)
+        dl:AddRect(va(x, y - 1), vb(x2, y2 + 1), u32(WORN_EDGE), 7, 0, 1)
     end
-    if imgui.IsItemHovered() then dl:AddRectFilled(va(x - 4, y - 1), vb(x2 + 4, y2 + 1), u32(COL_HOVER), 7) end
+    if imgui.IsItemHovered() then dl:AddRectFilled(va(x, y - 1), vb(x2, y2 + 1), u32(COL_HOVER), 7) end
     if off then -- a red X where the icon goes
         local m = 5
-        dl:AddLine(va(x + m, y + m), vb(x + PICK_ICON - m, y + PICK_ICON - m), u32(COL.lock), 2)
-        dl:AddLine(va(x + PICK_ICON - m, y + m), vb(x + m, y + PICK_ICON - m), u32(COL.lock), 2)
+        dl:AddLine(va(ix + m, y + m), vb(ix + PICK_ICON - m, y + PICK_ICON - m), u32(COL.lock), 2)
+        dl:AddLine(va(ix + PICK_ICON - m, y + m), vb(ix + m, y + PICK_ICON - m), u32(COL.lock), 2)
         dl:AddText(va(tx, ty), u32(COL_DIM), 'Take it off')
         return clicked
     end
     dl:AddText(va(tx, ty), u32(COL_HEAD), e.label)
-    local bx = x2 - 6 - textw(e.bag)
+    local bx = x2 - 8 - textw(e.bag)
     dl:AddText(va(bx, ty), u32(COL_DIM), e.bag)
     if worn then
         local tw = textw('worn')
@@ -706,7 +712,7 @@ local function pick_body()
     if (#pick.list == 0) then line('Nothing in your equip bags fits it for this job.', COL_DIM) end
     local child = (#pick.list > PICK_ROWS)
     if child then
-        imgui.BeginChild('##gcgear_picks', size(0, PICK_ROWS * (PICK_ICON + MENU_SPACE[2])), 0)
+        imgui.BeginChild('##gcgear_picks', size(pick.rowW + SCROLL_W + 2, PICK_ROWS * (PICK_ICON + MENU_SPACE[2])), 0)
         dl = imgui.GetWindowDrawList()
     end
     for i, e in ipairs(pick.list) do
@@ -725,12 +731,17 @@ local function draw_pick()
     imgui.PushStyleVar(ImGuiStyleVar_ItemSpacing, MENU_SPACE)
     imgui.PushStyleVar(ImGuiStyleVar_PopupRounding, 10)
     imgui.PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1)
+    imgui.PushStyleVar(ImGuiStyleVar_ScrollbarSize, SCROLL_W)
     imgui.PushStyleColor(ImGuiCol_PopupBg, COL_TIP_BG)
     imgui.PushStyleColor(ImGuiCol_Border, COL_EDGE)
     imgui.PushStyleColor(ImGuiCol_Separator, COL_LINE)
     imgui.PushStyleColor(ImGuiCol_Header, COL_NONE) -- the rows' own hover and worn marks, not the theme's
     imgui.PushStyleColor(ImGuiCol_HeaderHovered, COL_NONE)
     imgui.PushStyleColor(ImGuiCol_HeaderActive, COL_NONE)
+    imgui.PushStyleColor(ImGuiCol_ScrollbarBg, COL_NONE) -- a thin grey scrollbar, not the theme's
+    imgui.PushStyleColor(ImGuiCol_ScrollbarGrab, SCROLL_GRAB)
+    imgui.PushStyleColor(ImGuiCol_ScrollbarGrabHovered, SCROLL_HOVER)
+    imgui.PushStyleColor(ImGuiCol_ScrollbarGrabActive, SCROLL_HOVER)
     local ok, why = true, nil
     if imgui.BeginPopup('##gcgear_pick') then
         ok, why = pcall(pick_body)
@@ -738,8 +749,8 @@ local function draw_pick()
     else
         pick.cell, pick.list, pick.pos = nil, nil, nil
     end
-    imgui.PopStyleColor(6)
-    imgui.PopStyleVar(4)
+    imgui.PopStyleColor(10)
+    imgui.PopStyleVar(5)
     if not ok then error(why, 0) end
 end
 -- Right-click a slot: /gcedit on the set that put it on (or asked for it), that slot selected. Ctrl+click: /lock or
