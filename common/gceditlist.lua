@@ -522,6 +522,12 @@ local function draw_sets()
             if (g == 'Weapons') and (find == '') and not filtering then
                 rows = rows or {}
                 hint = { empty = (#rows == 0), picks = ctx.weapon_picks(), problems = ctx.weapon_problems() }
+            elseif (g == 'Melee') and (find == '') and not filtering and (ctx.melee_modes ~= nil) then
+                -- MELEE shows the /mset modes and how to add one, a set under it or not
+                rows = rows or {}
+                local names = {}
+                for _, m in ipairs(ctx.melee_modes()) do names[#names + 1] = (m == 'Default') and 'Base' or m end
+                hint = { mset = '/mset: ' .. table.concat(names, ', '), picks = {}, problems = {} }
             end
             local isHidden = lib.IsHidden(hiddenPref, g, jobNow)
             if isHidden and (rows ~= nil) then editorState.cache.anyHidden = true end
@@ -594,6 +600,16 @@ local function draw_sets()
                 imgui.Indent(arrowW)
                 imgui.PushTextWrapPos(0)
                 for _, p in ipairs(grp.hint.problems) do imgui.TextColored(palette.warn, p) end
+                if (grp.hint.mset ~= nil) then
+                    imgui.TextColored(palette.dim, grp.hint.mset)
+                    if imgui.Selectable('+ A /mset mode (Hybrid, MidAcc...)##gcm_new', false) then
+                        editorState.ui.requestNewMset = true
+                    end
+                    if imgui.IsItemHovered() then
+                        set_tip('A melee mode of your own: /mset <name> then wears <set>_<name> (Tp_, Ws_, a weapon '
+                            .. "skill's) over its base. Name it, tick the sets to make, Add; Save writes it.")
+                    end
+                end
                 if grp.hint.empty then
                     for _, p in ipairs(grp.hint.picks) do imgui.TextColored(palette.dim, p) end
                     if imgui.Selectable('+ A /wm mode: New set Weapon_<Name>##gcw_new', false) then

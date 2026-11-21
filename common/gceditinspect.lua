@@ -1033,42 +1033,8 @@ local function conds_on(conds, now)
     return true
 end
 
-local function draw_new_mode()
-    if not imgui.BeginPopup('##gcedit_newmode') then return end
-    imgui.TextUnformatted('New melee mode (/mset)')
-    imgui.PushItemWidth(260)
-    imgui.InputTextWithHint('##gcedit_modename', 'Name: Hybrid, MidAcc...', editorState.ui.newMode, 24)
-    imgui.PopItemWidth()
-    local name = string.match(editorState.ui.newMode[1] or '', '^%s*(.-)%s*$')
-    local clash = false
-    for _, m in ipairs(melee_modes()) do
-        if string.lower(m) == string.lower(name) then clash = true end
-    end
-    local okName = (string.match(name, '^%a[%w]*$') ~= nil)
-    imgui.PushTextWrapPos(300)
-    imgui.TextColored(
-        palette.dim,
-        "Save adds it to gcinclude.MeleeModes in your file. /mset then cycles to it, and every set named <set>_<mode> (Tp_, Ws_, a weapon skill's) goes on over its base."
-    )
-    if clash then
-        imgui.TextColored(palette.bad, 'That mode exists.')
-    elseif (name ~= '') and not okName then
-        imgui.TextColored(palette.bad, 'Letters and digits only (no spaces or _).')
-    end
-    imgui.PopTextWrapPos()
-    if imgui.Button('Add##gcedit_newmode') and okName and not clash then
-        editorState.document.newModes[#editorState.document.newModes + 1] = name
-        editorState.ui.newMode[1] = ''
-        editorState.document.revision = editorState.document.revision + 1
-        imgui.CloseCurrentPopup()
-    end
-    imgui.SameLine()
-    if imgui.Button('Cancel##gcedit_newmode') then imgui.CloseCurrentPopup() end
-    imgui.EndPopup()
-end
-
     return { describe = describe, cmp_of = cmp_of, inspection_target = inspection_target, inspect_item = inspect_item,
         set_stats = set_stats, ignored_suggestion_names = ignored_suggestion_names, draw_layers = draw_layers,
         set_action_entries = set_action_entries, draw_set = draw_set, wi_from_game = wi_from_game,
-        melee_modes = melee_modes, conds_on = conds_on, draw_new_mode = draw_new_mode }
+        melee_modes = melee_modes, conds_on = conds_on }
 end

@@ -1,7 +1,7 @@
 -- /gcedit: the Related and To fill tabs, and renaming sets.
 return function(
     LAC_WORDS, NONE, SCREEN, allItems, canDraw, cardText, choose_item, clip_begin, clip_drawn, clip_end, clip_skip,
-    conds_on, ctx, current, describe, draw_icon, draw_new_mode, draw_png, edit, editorPanels, editorPreferences,
+    conds_on, ctx, current, describe, draw_icon, draw_png, edit, editorPanels, editorPreferences,
     editorState, feedback, fits, ghost_of, go_to, group_of, has_set, help, help_icon, ignored_suggestion_names,
     imgui, index_all_items, inspect_item, inspection_target, itemTooltip, make_button, make_set, melee_modes,
     owned_for, palette, picker, pill, profiler, red_button, request_context, saveReview, save_preferences, setFile,
@@ -257,6 +257,119 @@ local function draw_weapon_sets()
     imgui.EndPopup()
 end
 
+-- A new /mset mode's sets: <set>_<mode> over each base the engine lays a melee mode over (gcinclude.EquipMode:
+-- Tp_, Ws_; ByName: Dt and the sets named for a weapon skill or ability). Tp_ and Ws_ start ticked.
+local function mset_set_rows(mode)
+    local doc, rows = editorState.document, {}
+    local by = doc.model.byLower
+    for _, s in ipairs(doc.model.list) do
+        if (s.parentName == nil) and not doc.deleted[s.name] and not string.match(s.lname, '^weapon_')
+            and (s.lname ~= 'idle') then
+            local name = ctx.actions.VariantName(s, mode)
+            local l = s.lname
+            local main = (l == 'tp_default') or (l == 'ws_default')
+            if (name ~= nil) and (main or (l == 'dt') or (name == s.name .. '_' .. mode)) then
+                local have = (by[string.lower(name)] ~= nil) and not doc.deleted[by[string.lower(name)].name]
+                local why = (l == 'tp_default') and 'over Tp_Default (engaged)'
+                    or ((l == 'ws_default') and 'over Ws_Default (any weapon skill)')
+                    or ((l == 'dt') and 'over Dt (/dt)') or ('over ' .. s.name)
+                rows[#rows + 1] = { name = name, base = s, why = why, have = have, tick = { main and not have } }
+            end
+        end
+    end
+    table.sort(rows, function(a, b)
+        local ra = (a.base.lname == 'tp_default') and 1 or ((a.base.lname == 'ws_default') and 2)
+            or ((a.base.lname == 'dt') and 3) or 4
+        local rb = (b.base.lname == 'tp_default') and 1 or ((b.base.lname == 'ws_default') and 2)
+            or ((b.base.lname == 'dt') and 3) or 4
+        if ra ~= rb then return ra < rb end
+        return a.name < b.name
+    end)
+    return rows
+end
+
+-- + A /mset mode (the MELEE heading, the Related tab): the name, then the sets to make for it, in one go. Save
+-- writes the mode into gcinclude.MeleeModes and the sets into the file.
+local function draw_mset_mode()
+    local ui = editorState.ui
+    if ui.requestNewMset then
+        ui.requestNewMset, ui.newMode[1], ui.msetRows = nil, '', nil
+        imgui.OpenPopup('##gcedit_newmset')
+    end
+    if not imgui.BeginPopup('##gcedit_newmset') then return end
+    imgui.TextColored(palette.section, 'New melee mode (/mset)')
+    imgui.PushItemWidth(260)
+    imgui.InputTextWithHint('##gcedit_msetname', 'Name: Hybrid, MidAcc...', ui.newMode, 24)
+    imgui.PopItemWidth()
+    local name = string.match(ui.newMode[1] or '', '^%s*(.-)%s*$')
+    local clash = false
+    for _, m in ipairs(melee_modes()) do
+        if string.lower(m) == string.lower(name) then clash = true end
+    end
+    local okName = (string.match(name, '^%a[%w]*$') ~= nil)
+    imgui.PushTextWrapPos(520)
+    if clash then
+        imgui.TextColored(palette.bad, 'That mode exists.')
+    elseif (name ~= '') and not okName then
+        imgui.TextColored(palette.bad, 'Letters and digits only (no spaces or _).')
+    end
+    local shown = okName and name or '<Mode>'
+    imgui.TextColored(palette.dim, '/mset ' .. string.lower(shown) .. ' wears <set>_' .. shown
+        .. ' over each set below. Tick the ones whose gear should differ: they start empty, fill only what differs. '
+        .. 'Written on Save + reload (added to gcinclude.MeleeModes).')
+    imgui.PopTextWrapPos()
+    if okName and not clash then
+        if (ui.msetRows == nil) or (ui.msetRows.name ~= name) then -- ticks kept while the name stays
+            ui.msetRows = { name = name, rows = mset_set_rows(name) }
+        end
+    else
+        ui.msetRows = nil
+    end
+    local rows = (ui.msetRows ~= nil) and ui.msetRows.rows or {}
+    local n = 0
+    if #rows > 0 then
+        local lh = (imgui.GetFrameHeightWithSpacing ~= nil) and imgui.GetFrameHeightWithSpacing() or 24
+        local borders = ImGuiChildFlags_Borders or ImGuiChildFlags_Border or 1
+        imgui.BeginChild('##gcms_list', { 520, math.min(300, (#rows + 1) * lh) }, borders)
+        for i, r in ipairs(rows) do
+            if r.have then
+                imgui.TextColored(palette.dim, r.name .. '  (have)')
+            else
+                imgui.Checkbox(r.name .. '##gcms' .. i, r.tick)
+            end
+            imgui.SameLine()
+            imgui.TextColored(palette.dim, r.why)
+        end
+        imgui.EndChild()
+        for _, r in ipairs(rows) do
+            if r.tick[1] and not r.have then n = n + 1 end
+        end
+    end
+    local label = (n > 0) and ('Add ' .. shown .. ', make ' .. n .. ' set' .. ((n == 1) and '' or 's'))
+        or ('Add ' .. shown)
+    if make_button(label .. '##gcms_add') and okName and not clash then
+        editorState.document.newModes[#editorState.document.newModes + 1] = name
+        local first = nil
+        for _, r in ipairs(rows) do
+            if r.tick[1] and not r.have and not has_set(r.name) then
+                make_set(r.name, nil, true)
+                local s = editorState.document.model.byName[r.name]
+                if (s ~= nil) and (s.after == nil) and not r.base.new then s.after = r.base.name end -- by its base
+                first = first or r.name
+            end
+        end
+        editorState.document.revision = editorState.document.revision + 1
+        feedback('New /mset mode ' .. name .. ((n > 0) and (' and ' .. n .. ' set' .. ((n == 1) and '' or 's'))
+            or '') .. ' (unsaved): fill what differs, then Save + reload.')
+        if first ~= nil then go_to(first, nil) end
+        ui.newMode[1], ui.msetRows = '', nil
+        imgui.CloseCurrentPopup()
+    end
+    imgui.SameLine()
+    if imgui.Button('Cancel##gcms_cancel') then imgui.CloseCurrentPopup() end
+    imgui.EndPopup()
+end
+
 -- Every set GoomSwap could put on for this set's action, grouped by what has to be on for it, have or missing.
 local function draw_over(set)
     local wi = editorState.ui.wi
@@ -270,7 +383,7 @@ local function draw_over(set)
             .. '- have: click to open that set; < Back over the slots returns.\n'
             .. '- Make: adds it empty; Make all: every missing one (saved on Save + reload).\n'
             .. "- Ignore irrelevant candidates by exact set name in settings.EditorIgnoreSuggestions, e.g. T{'Singing'}.\n"
-            .. '- + New mode: a /mset mode of your own; its sets are named <set>_<mode>.\n'
+            .. '- + New mode: a /mset mode of your own and its sets (<set>_<mode>); also under the MELEE heading.\n'
             .. 'Hover a name: the set it goes on over.'
     )
     imgui.SameLine()
@@ -300,11 +413,7 @@ local function draw_over(set)
     imgui.SameLine()
     show('Pick modes', 'pick')
     imgui.SameLine(0, 16)
-    if imgui.SmallButton('+ New mode##gcedit') then
-        editorState.ui.newMode[1] = ''
-        imgui.OpenPopup('##gcedit_newmode')
-    end
-    draw_new_mode()
+    if imgui.SmallButton('+ New mode##gcedit') then editorState.ui.requestNewMset = true end
     if #editorState.document.newModes > 0 then
         imgui.TextColored(
             palette.warn,
@@ -1363,6 +1472,7 @@ end
 
     return { draw_over = draw_over, draw_picker = draw_picker, fill_list = fill_list, draw_fill = draw_fill,
         draw_weapon_sets = draw_weapon_sets,
+        draw_mset_mode = draw_mset_mode,
         draw_context_menu = draw_context_menu, variants_of = variants_of, rename_problem = rename_problem,
         rename_new = rename_new }
 end
