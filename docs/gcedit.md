@@ -19,7 +19,7 @@ Edits your loaded job file. Changes stay in memory until you confirm a save. `/g
 | TP or WS gear for a weapon type | `Tp_2h` / `Tp_1h` (and `Ws_`, `Dt_`, `Idle_`...): for a weapon with no set of its own, by its Main ([How sets stack](sets.md#how-sets-stack)) |
 | A Main/Sub/Range pick (`/mw` `/sw` `/rw`) | Nothing: every item in a `Weapon_` set is one. Others go in `gcinclude.SubModes` (etc.) in the file |
 | A COR/RNG gun | Add its name to `gcinclude.RangeModes` in the file |
-| A melee mode (`/mset`) | **Related** tab, **+ New mode**; its sets are `<set>_<mode>` (`Tp_Hybrid`) |
+| A melee mode (`/mset`) | Under the **MELEE** heading (your modes are listed there), **+ A /mset mode** (also **+ New mode** on the **Related** tab): name it, tick the sets to make for it (`Tp_<mode>` and `Ws_<mode>` start ticked; `Dt_<mode>` and each weapon skill's `Savage Blade_<mode>` offered), **Add**. They start empty: fill only what differs. **Save + reload** adds it to `gcinclude.MeleeModes`; `/mset <mode>` then wears each over its base |
 | A set for one buff | Open `Buffs` (idle/engaged), `Buffs_Ws` or `Buffs_Midcast`, type the buff's name as the game shows it, **New buff set**. Each shows under its parent (`Buffs['Aftermath: Lv.3']`) and edits, deletes and copies to other jobs like any set. Renaming one also renames code that takes it from its parent (`sets.Buffs['Haste']`, `sets.Buffs.Haste`) |
 
 ## Headings
@@ -85,7 +85,7 @@ written at once; **This job** changes wait for the editor's Save, like set edits
 lines (a new one goes just before `gcinclude.Initialize()`). Below the settings, **Only in <job file>** edits that
 file's own options the same way: `DefaultWeapons`, `WeaponRoles`, `MainModes` `SubModes` `RangeModes`,
 `WeaponItemMap`, `AlwaysDualWield`, `NukeModes`, `Packer`, `SIRSkip` `THSkip`, `CureObi`, `SafeAmmo`, `RangeAmmo`,
-`CORmsg`, `LockstyleSet` (`WeaponModes` and `MeleeModes` are shown; Weapon_ sets and **+ New mode** change them).
+`CORmsg`, `LockstyleSet` (`WeaponModes` and `MeleeModes` are shown; Weapon_ sets and **+ A /mset mode** change them).
 A value written as code, or set in more than one place in the file, is left for you to edit there. True/false are checkboxes, numbers and text are boxes, tables are Lua
 (`{ 'Ninjutsu' }`). Hover a setting for what it does, an example typed the way its box takes it, and its value in
 each file; an empty box shows the example greyed. Numbers keep to their range (HP/MP % 0-100, TP 0-3000).

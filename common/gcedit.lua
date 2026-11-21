@@ -913,14 +913,14 @@ local m_gceditinspect = gFunc.LoadFile('common\\gceditinspect.lua')(
     set_status, set_tip, statModel, tag, text_w, use_worn, where, wrap, xy
 )
 local describe, cmp_of, inspection_target, inspect_item, set_stats, ignored_suggestion_names, draw_layers,
-    set_action_entries, draw_set, wi_from_game, melee_modes, conds_on, draw_new_mode = m_gceditinspect.describe,
+    set_action_entries, draw_set, wi_from_game, melee_modes, conds_on = m_gceditinspect.describe,
     m_gceditinspect.cmp_of, m_gceditinspect.inspection_target, m_gceditinspect.inspect_item, m_gceditinspect.set_stats,
     m_gceditinspect.ignored_suggestion_names, m_gceditinspect.draw_layers, m_gceditinspect.set_action_entries,
-    m_gceditinspect.draw_set, m_gceditinspect.wi_from_game, m_gceditinspect.melee_modes, m_gceditinspect.conds_on,
-    m_gceditinspect.draw_new_mode
+    m_gceditinspect.draw_set, m_gceditinspect.wi_from_game, m_gceditinspect.melee_modes, m_gceditinspect.conds_on
+ctx.melee_modes = melee_modes -- the list's MELEE heading names them
 local m_gceditrelated = gFunc.LoadFile('common\\gceditrelated.lua')(
     LAC_WORDS, NONE, SCREEN, allItems, canDraw, cardText, choose_item, clip_begin, clip_drawn, clip_end, clip_skip,
-    conds_on, ctx, current, describe, draw_icon, draw_new_mode, draw_png, edit, editorPanels, editorPreferences,
+    conds_on, ctx, current, describe, draw_icon, draw_png, edit, editorPanels, editorPreferences,
     editorState, feedback, fits, ghost_of, go_to, group_of, has_set, help, help_icon, ignored_suggestion_names,
     imgui, index_all_items, inspect_item, inspection_target, itemTooltip, make_button, make_set, melee_modes,
     owned_for, palette, picker, pill, profiler, red_button, request_context, saveReview, save_preferences, setFile,
@@ -1729,6 +1729,7 @@ local function body()
     draw_context_menu()
     draw_delete_confirmation()
     m_gceditrelated.draw_weapon_sets()
+    m_gceditrelated.draw_mset_mode()
     draw_copy_jobs()
     draw_find_item()
     draw_rename()
