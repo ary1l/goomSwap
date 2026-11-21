@@ -223,15 +223,22 @@ local function ghosts_of(text, vstart, close, slots)
         local slot = (key ~= nil) and CANON[string.lower(key)] or nil
         if (slot ~= nil) and (slots[slot] == nil) and ((out == nil) or (out[slot] == nil)) and (le <= close + 1) then
             local c, name, after = string.sub(rest, 1, 1), nil, 1
-            if (c == "'") or (c == '"') then name, after = read_string(rest, 1) end
-            name = name or string.match(rest, 'Name%s*=%s*[\'"](.-)[\'"]') or rest
+            if (c == "'") or (c == '"') then
+                name, after = read_string(rest, 1)
+            elseif (c == '{') then -- { Name = 'Sakpata\'s Sword', Priority = 100 }: escapes read, the comment after it
+                local q = string.match(rest, '^{[^}]-Name%s*=%s*()[\'"]')
+                if (q ~= nil) then name = read_string(rest, q) end
+                after = skip_value(rest, 1)
+            end
+            name = name or rest
             out = out or {}
             out[slot] = {
                 ls = p,
                 le = le,
                 ind = ind,
                 name = name,
-                why = string.match(string.sub(rest, after), '%-%-%s*(.-)%s*$'),
+                -- the last comment: /gcbuild adds its note after the line's own (--5 -- not owned)
+                why = string.match(string.sub(rest, after), '.*%-%-%s*(.-)%s*$'),
             }
         end
         p = le
