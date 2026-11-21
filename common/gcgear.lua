@@ -1,7 +1,8 @@
 -- /gcgear: the gear you have on, 4x4 in the game's equipment-window order (as atom0s' equipmon): icons, the ammo
--- count, a red X on a slot the game has encumbered. A padlock (top left) says what keeps it: red your /lock, amber the
--- TP hold, purple Aminon, Hoxne, /proc, an item use (/gce) or a hold (/capacity...); a pink corner: it still needs RP.
--- No borders: some item icons have their own coloured frame.
+-- count, a red X on a slot the game has encumbered. A padlock (bottom left) says what keeps it: red your /lock, purple
+-- Aminon, Hoxne, /proc, an item use (/gce) or a hold (/capacity...); an amber dot (bottom right): the TP hold (weapon
+-- commands still swap); a pink corner: it still needs RP; '!' (top left): a swap that didn't go on. No borders: some
+-- item icons have their own coloured frame.
 -- Hover a slot: the item, the set that put it on, who holds it. Colours: the bar's colour preset (gcdisplay.Theme).
 -- Every box also shares its slots (luashitacast\hud\<Name>.gear): in the /gchud drop, hover a box's name for its
 -- grid (gcgear.AltTip).
@@ -32,9 +33,9 @@ local function xy(a, b) -- ImGui vectors come back as two numbers or as a table,
     if (type(a) == 'table') then return tonumber(a[1] or a.x), tonumber(a[2] or a.y) end
     return tonumber(a), tonumber(b)
 end
-local function ctrl_down()
+local function key_down(k) -- 'KeyCtrl', 'KeyShift', 'KeyAlt': ImGui's io
     local ok, io = pcall(imgui.GetIO)
-    return ok and (io ~= nil) and (io.KeyCtrl == true)
+    return ok and (io ~= nil) and (io[k] == true)
 end
 local function textw(t)
     local w = imgui.CalcTextSize(t)
@@ -309,7 +310,7 @@ local function details(c)
     local set = (w ~= nil) and editable(w.by) or nil
     if (set ~= nil) then line('Right-click: /gcedit ' .. set, COL_DIM) end
     local mine = (inc ~= nil) and (inc.LockedSlots[c.slot] ~= nil) and (inc.LockedSlots[c.slot].user == true)
-    line('Ctrl+click: ' .. (mine and '/unlock ' or '/lock ') .. string.lower(c.name), COL_DIM)
+    line('Ctrl: ' .. (mine and '/unlock' or '/lock') .. '  Alt: take off  Shift: pick gear', COL_DIM)
 end
 
 -- A padlock at ox, oy, s px tall, in col, outlined dark so it reads over any icon.
@@ -335,7 +336,14 @@ local function marks(dl, c, x, y, cell)
         dl:AddLine(va(x2 - m, y + m), vb(x + m, y2 - m), u32(COL.lock), th)
     end
     local h = c.holder
-    if (h ~= nil) then padlock(dl, x + 2, y + 2, math.max(9, math.floor(cell * 0.36)), COL[h]) end
+    if (h == 'hold') then -- the TP hold: an amber dot, bottom right (weapons carry no ammo count there)
+        local r = math.max(2.5, cell / 10)
+        dl:AddCircleFilled(va(x2 - r - 2, y2 - r - 2), r + 1, u32(OUTLINE), 12)
+        dl:AddCircleFilled(va(x2 - r - 2, y2 - r - 2), r, u32(COL.hold), 12)
+    elseif (h ~= nil) then
+        local s = math.max(9, math.floor(cell * 0.36))
+        padlock(dl, x + 2, y2 - 2 - s, s, COL[h])
+    end
     if (c.rp ~= nil) and c.rp.unfinished then -- a quarter circle in the top right corner
         local r = math.max(4, math.floor(cell * 0.30))
         if (dl.PushClipRect ~= nil) and (dl.PopClipRect ~= nil) then
@@ -357,7 +365,7 @@ local function marks(dl, c, x, y, cell)
         local text = tostring(c.count)
         outlined(text, x2 - textw(text) - 2, ty, WHITE)
     end
-    if c.missed then outlined('!', x + 3, ty, COL.warn) end -- a missed swap, bottom left
+    if c.missed then outlined('!', x + 3, y + 1, COL.warn) end -- a missed swap, top left
 end
 
 -- An icon at alpha (ImGui's Image takes no tint here: the style's Alpha fades it, popped before the marks).
@@ -384,7 +392,10 @@ local function grid_body(list, cell, gap, alpha, bare)
         if imgui.IsItemHovered() then
             hovered = c
             if imgui.IsItemClicked(1) then click = 'edit'
-            elseif imgui.IsItemClicked(0) and ctrl_down() then click = 'lock' end
+            elseif imgui.IsItemClicked(0) then
+                click = (key_down('KeyCtrl') and 'lock') or (key_down('KeyAlt') and 'off')
+                    or (key_down('KeyShift') and 'pick') or nil
+            end
         end
         if (x ~= nil) then marks(dl, c, x, y, cell) end
     end
@@ -566,8 +577,89 @@ end
 -- The window: no title bar, dragged anywhere; where it is let go is saved. Hidden with the game's interface, as the
 -- bar is (gcdisplay.UiHidden).
 local PAD, NO_PAD, CLEAR, FLAGS = { 4, 4 }, { 0, 0 }, { 0, 0, 0, 0 }, nil
+-- Put item in c's slot now ('remove': take it off) and keep it there with your /lock, so the next swap doesn't put
+-- the set's piece back; /unlock lets sets swap it again. Not over another owner's lock or encumbrance; a TP-held
+-- weapon only once it is your /lock (Ctrl+click), so a click never costs your TP by itself.
+local function wear(c, item)
+    if encumbered(c.game) then inc.Err(c.name .. ' is encumbered'); return end
+    local owners = inc.LockedSlots[c.slot] or {}
+    for o in pairs(owners) do
+        if (o ~= 'user') then
+            inc.Err(c.name .. ' is locked by ' .. owner_text(o) .. ' (off: '
+                .. (OWNER_OFF[o] or tostring(inc.LockOwnerFix(o, c.slot))) .. ')')
+            return
+        end
+    end
+    if (inc.HeldSlots[c.slot] ~= nil) and (owners.user ~= true) then
+        inc.Err(c.name .. ' is held for your TP: Ctrl+click (/lock) it first to change it')
+        return
+    end
+    if (owners.user == true) then inc.UnlockSlots({ c.slot }, 'user') end
+    inc.HeldSlots[c.slot] = nil -- the unlock may have handed a weapon to the TP hold: force equips skip held slots
+    gState.Disabled[c.slot] = false
+    gFunc.ForceEquipSet({ [c.name] = item })
+    inc.LockSlots({ c.slot }, 'user')
+    inc.Say(c.name .. ': ' .. ((item == 'remove') and 'off' or item) .. ', locked (/unlock '
+        .. string.lower(c.name) .. ' to let sets swap it)')
+end
+-- Shift+click: your gear that fits the slot, from the bags LAC equips from, wearable by this job at this level.
+local pick = { cell = nil, list = nil }
+local function gear_for(c)
+    local bags = ((gSettings ~= nil) and (type(gSettings.EquipBags) == 'table')) and gSettings.EquipBags or EQUIP_BAGS
+    local inv, res = AshitaCore:GetMemoryManager():GetInventory(), AshitaCore:GetResourceManager()
+    local p = AshitaCore:GetMemoryManager():GetPlayer()
+    local job, lv, bitSlot = p:GetMainJob(), tonumber(p:GetMainJobLevel()) or 99, bit.lshift(1, c.game)
+    local byName, list = {}, {}
+    for _, b in pairs(bags) do
+        for i = 1, (gData.GetContainerMax(b) or 0) do
+            local it = inv:GetContainerItem(b, i)
+            local r = ((it ~= nil) and (it.Id ~= 0) and (it.Id ~= 65535) and ((it.Count or 0) > 0))
+                and res:GetItemById(it.Id) or nil
+            if (r ~= nil) and (r.Name ~= nil) and (type(r.Name[1]) == 'string')
+                and (bit.band(tonumber(r.Slots) or 0, bitSlot) ~= 0)
+                and (bit.band(tonumber(r.Jobs) or 0, bit.lshift(1, job)) ~= 0)
+                and ((tonumber(r.Level) or 0) <= lv) then
+                local key = string.lower(r.Name[1])
+                local e = byName[key]
+                if (e == nil) then
+                    e = { name = r.Name[1], id = it.Id, bag = BAG_NAME[b] or tostring(b), n = 0 }
+                    byName[key] = e
+                    list[#list + 1] = e
+                end
+                e.n = e.n + 1
+            end
+        end
+    end
+    table.sort(list, function (a, b2) return string.lower(a.name) < string.lower(b2.name) end)
+    return list
+end
+local PICK_ICON, PICK_ROWS = 20, 14
+local function draw_pick()
+    if not imgui.BeginPopup('##gcgear_pick') then pick.cell, pick.list = nil, nil; return end
+    local c = pick.cell
+    if (c == nil) then imgui.EndPopup(); return end
+    line(c.name .. ': your gear that fits (click: wear it, /lock)', COL_HEAD)
+    if (#pick.list == 0) then line('Nothing in your equip bags fits it for this job.', COL_DIM) end
+    local lh = math.max(PICK_ICON, imgui.GetTextLineHeight()) + 4
+    local child = (#pick.list > PICK_ROWS)
+    if child then imgui.BeginChild('##gcgear_picks', size(0, PICK_ROWS * lh), 0) end
+    budget = ICONS_PER_FRAME
+    for i, e in ipairs(pick.list) do
+        local t = icon(e.id)
+        if (t ~= nil) then imgui.Image(t.id, size(PICK_ICON, PICK_ICON))
+        else imgui.Dummy(size(PICK_ICON, PICK_ICON)) end
+        imgui.SameLine()
+        local label = e.name .. ((e.n > 1) and (' x' .. e.n) or '') .. '   ' .. e.bag .. '##gcgp' .. i
+        if imgui.Selectable(label, (c.item ~= nil) and (string.lower(c.item) == string.lower(e.name))) then
+            wear(c, e.name)
+            imgui.CloseCurrentPopup()
+        end
+    end
+    if child then imgui.EndChild() end
+    imgui.EndPopup()
+end
 -- Right-click a slot: /gcedit on the set that put it on (or asked for it), that slot selected. Ctrl+click: /lock or
--- /unlock it, as typed (its chat line).
+-- /unlock it, as typed (its chat line). Alt+click: take it off; Shift+click: pick other gear (both kept: your /lock).
 local function act(c, click)
     if (click == 'edit') then
         local w = source(c)
@@ -578,6 +670,12 @@ local function act(c, click)
         local mine = (inc.LockedSlots[c.slot] ~= nil) and (inc.LockedSlots[c.slot].user == true)
         local cmd = (mine and 'unlock ' or 'lock ') .. string.lower(c.name)
         AshitaCore:GetChatManager():QueueCommand(-1, '/lac fwd ' .. cmd)
+    elseif (click == 'off') then
+        if (c.id == 0) then inc.Say(c.name .. ' is empty'); return end
+        wear(c, 'remove')
+    elseif (click == 'pick') then
+        pick.cell, pick.list = c, gear_for(c)
+        imgui.OpenPopup('##gcgear_pick')
     end
 end
 local function window_body(cell, gap)
@@ -585,6 +683,7 @@ local function window_body(cell, gap)
     local c, click = grid(cells, cell, gap, cfg.alpha, not cfg.bg)
     if (c ~= nil) then tooltip(details, c) end
     if (c ~= nil) and (click ~= nil) and (inc ~= nil) then act(c, click) end
+    draw_pick()
     local x, y = xy(imgui.GetWindowPos())
     if (x ~= nil) and (y ~= nil) and not imgui.IsMouseDown(0) then
         x, y = math.floor(x + 0.5), math.floor(y + 0.5)
