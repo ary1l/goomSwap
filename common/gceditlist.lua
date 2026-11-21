@@ -527,7 +527,7 @@ local function draw_sets()
                 rows = rows or {}
                 local names = {}
                 for _, m in ipairs(ctx.melee_modes()) do names[#names + 1] = (m == 'Default') and 'Base' or m end
-                hint = { mset = '/mset: ' .. table.concat(names, ', '), picks = {}, problems = {} }
+                hint = { mset = names, picks = {}, problems = {} }
             end
             local isHidden = lib.IsHidden(hiddenPref, g, jobNow)
             if isHidden and (rows ~= nil) then editorState.cache.anyHidden = true end
@@ -571,6 +571,7 @@ local function draw_sets()
                 grp.label = grp.label or (grp.head .. '##gcg_' .. grp.g)
                 imgui.SetNextItemOpen(not folded, ImGuiCond_Always or 1)
                 local open = imgui.TreeNodeEx(grp.label, bit.bor(ImGuiTreeNodeFlags_SpanAvailWidth or 0,
+                    ImGuiTreeNodeFlags_AllowOverlap or 0, -- the + mode button on MELEE / WEAPONS
                     ImGuiTreeNodeFlags_NoTreePushOnOpen or 0))
                 if (open == folded) and (find == '') then -- clicked: it turned
                     editorState.ui.fold[grp.g] = not open
@@ -596,30 +597,48 @@ local function draw_sets()
                 imgui.SameLine(x0 + arrowW + text_w(grp.head) + 12)
                 pill(grp.n, palette.dim, palette.chipBg)
             end
-            if (grp.hint ~= nil) and not folded then -- WEAPONS: what is wrong, and with no Weapon_ set how to add one
+            if (grp.hint ~= nil) then -- MELEE / WEAPONS: + mode at the heading's right end (folded too)
+                local pad = editorPanels.Density(editorState.preferences.density).padding[1]
+                local bw = text_w('+ mode') + 2 * pad
+                imgui.SameLine()
+                local avail = (imgui.GetContentRegionAvail ~= nil) and ctx.xy(imgui.GetContentRegionAvail()) or nil
+                if (avail ~= nil) and (avail > bw) and (imgui.SetCursorPosX ~= nil)
+                    and (imgui.GetCursorPosX ~= nil) then
+                    imgui.SetCursorPosX(imgui.GetCursorPosX() + avail - bw)
+                end
+                if imgui.SmallButton('+ mode##gch_' .. grp.g) then
+                    if (grp.hint.mset ~= nil) then editorState.ui.requestNewMset = true
+                    else editorState.ui.openNewSet = 'Weapon_' end
+                end
+                if imgui.IsItemHovered() then
+                    set_tip((grp.hint.mset ~= nil)
+                        and ('A /mset mode of your own (Hybrid, MidAcc...): /mset <name> then wears <set>_<name> '
+                            .. "(Tp_, Ws_, a weapon skill's) over its base. Name it, tick the sets to make, Add; "
+                            .. 'Save writes it.')
+                        or ('A /wm mode: New set Weapon_<Name> with Main and Sub. /wm <name> puts them on, and its '
+                            .. 'items become /mw /sw picks too. Save adds it to gcinclude.WeaponModes.'))
+                end
+            end
+            if (grp.hint ~= nil) and not folded then -- MELEE: its modes; WEAPONS: what is wrong, the picks with no set
                 imgui.Indent(arrowW)
                 imgui.PushTextWrapPos(0)
                 for _, p in ipairs(grp.hint.problems) do imgui.TextColored(palette.warn, p) end
-                if (grp.hint.mset ~= nil) then
-                    imgui.TextColored(palette.dim, grp.hint.mset)
-                    if imgui.Selectable('+ A /mset mode (Hybrid, MidAcc...)##gcm_new', false) then
-                        editorState.ui.requestNewMset = true
-                    end
-                    if imgui.IsItemHovered() then
-                        set_tip('A melee mode of your own: /mset <name> then wears <set>_<name> (Tp_, Ws_, a weapon '
-                            .. "skill's) over its base. Name it, tick the sets to make, Add; Save writes it.")
+                if (grp.hint.mset ~= nil) then -- the /mset modes as chips, wrapped to the panel
+                    local avail = (imgui.GetContentRegionAvail ~= nil) and ctx.xy(imgui.GetContentRegionAvail()) or nil
+                    local used = 0
+                    for i, m in ipairs(grp.hint.mset) do
+                        local w = text_w(m) + 12
+                        if (i > 1) then
+                            if (avail == nil) or (used + w <= avail) then imgui.SameLine(0, 12) else used = 0 end
+                        end
+                        pill(m, palette.dim, palette.chipBg)
+                        if imgui.IsItemHovered() then set_tip('/mset ' .. string.lower(m)) end
+                        used = used + w
                     end
                 end
                 if grp.hint.empty then
                     for _, p in ipairs(grp.hint.picks) do imgui.TextColored(palette.dim, p) end
-                    if imgui.Selectable('+ A /wm mode: New set Weapon_<Name>##gcw_new', false) then
-                        editorState.ui.openNewSet = 'Weapon_'
-                    end
-                    if imgui.IsItemHovered() then
-                        set_tip('Weapon_<Name> with Main and Sub: /wm <name> puts them on, and its items become /mw /sw '
-                            .. 'picks too. Save adds it to gcinclude.WeaponModes.\nThe picks above are MainModes / '
-                            .. 'SubModes in Settings.')
-                    end
+                    if imgui.IsItemHovered() then set_tip('MainModes / SubModes in Settings.') end
                 end
                 imgui.PopTextWrapPos()
                 imgui.Unindent(arrowW)
