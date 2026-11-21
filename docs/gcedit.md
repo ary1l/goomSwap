@@ -135,7 +135,8 @@ a job file's own setting still wins. Details: [Settings](settings.md).
 - Click a slot, then pick an item from **Gear**; the header shows **Pending** vs **Saved** (paths, augments).
 - **Put in other sets...** (over the picker, or right-click a slot card): that piece, exactly as it is (path,
   augments), into the same slot of the sets you tick: grouped by heading, each showing what it has now (sets that
-  already have it, or write that slot as code, can't be ticked); **All in <heading>** ticks the open set's heading
+  already have it, write that slot as code, or wear your only copy of that earring or ring in the other ear or ring
+  slot, can't be ticked); **All in <heading>** ticks the open set's heading
   (an enmity piece in every job ability). Each is an unsaved edit: **Undo slot** per set, **Undo edit** one at a
   time; Save writes them.
 - Search matches words anywhere in the name or decoded stats (`nyame damage`); 3+ letters also lists items you don't

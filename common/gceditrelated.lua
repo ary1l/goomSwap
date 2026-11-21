@@ -379,18 +379,27 @@ local function same_piece(a, b)
         and (string.lower(tostring(a.path or '')) == string.lower(tostring(b.path or '')))
         and (string.lower(tostring(a.augs or '')) == string.lower(tostring(b.augs or '')))
 end
+local PAIR = { Ear1 = 'Ear2', Ear2 = 'Ear1', Ring1 = 'Ring2', Ring2 = 'Ring1' }
 local function put_rows(P)
     local doc, rows, place = editorState.document, {}, {}
     for i, h in ipairs(ctx.headings.order()) do place[h] = i end
+    -- an ear or ring the set already wears in the other slot of the pair: one copy can't go in both
+    local other, lname = PAIR[P.slot], string.lower(tostring(P.source.name))
+    local copies = editorState.inventory and editorState.inventory.copiesByName
+        and editorState.inventory.copiesByName[lname] or {}
+    local one = (#copies < 2)
     for i, s in ipairs(doc.model.list) do
         if (s.name ~= P.set) and (s.code == nil) and not s.extra and not doc.deleted[s.name] then
             local saved = s.slots[P.slot]
             local r = { set = s, at = i, tick = { false } }
             local v = current(s, P.slot)
+            local pv = (other ~= nil) and one and current(s, other) or nil
             if (saved ~= nil) and (saved.value.kind == 'code') then
                 r.note, r.off = 'code', true
             elseif same_piece(v, P.source) then
                 r.note, r.off = 'has it', true
+            elseif (pv ~= nil) and (string.lower(tostring(pv.name)) == lname) then
+                r.note, r.off = 'in ' .. other .. ' (one copy)', true
             else
                 r.note = 'now ' .. (((v ~= nil) and v.name) or 'empty')
             end
