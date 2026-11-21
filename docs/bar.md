@@ -69,13 +69,14 @@ The weapon's class comes from the mode's Main, else Range, else Sub; add your ow
 
 What you have on, 4x4 in the equipment window's order (Main Sub Range Ammo / Head Neck Ear1 Ear2 / Body Hands Ring1
 Ring2 / Back Waist Legs Feet), drawn like atom0s' equipmon: the game's item icons, the ammo count, a red X on a slot
-the game has encumbered (Salvage...). On top of that, each slot says what keeps it:
+the game has encumbered (Salvage...). On top of that, a padlock in the top left corner says what keeps a slot (no
+borders: some item icons have their own coloured frame):
 
 | Mark | Means |
 |---|---|
-| Red border | your `/lock` |
-| Amber border | held to keep your TP (`WeaponTPGuard`) or Aftermath (`AftermathHold`): Main, Sub, Range |
-| Purple border | Aminon, Hoxne, `/proc`, an item use (`/gce`, `/warpring`...) or a hold (`/capacity` `/jubilee` `/dynamisrp` `/abyproc`) |
+| Red padlock | your `/lock` |
+| Amber padlock | held to keep your TP (`WeaponTPGuard`) or Aftermath (`AftermathHold`): Main, Sub, Range |
+| Purple padlock | Aminon, Hoxne, `/proc`, an item use (`/gce`, `/warpring`...) or a hold (`/capacity` `/jubilee` `/dynamisrp` `/abyproc`) |
 | Pink corner | still needs RP (rank below its cap) |
 | Red X | encumbered: the game has locked the slot |
 | Orange `!` | a swap that didn't go on: GoomSwap's last swap named another item, nothing holds the slot, still not on 2s later |
