@@ -633,30 +633,114 @@ local function gear_for(c)
     table.sort(list, function (a, b2) return string.lower(a.name) < string.lower(b2.name) end)
     return list
 end
-local PICK_ICON, PICK_ROWS = 20, 14
-local function draw_pick()
-    if not imgui.BeginPopup('##gcgear_pick') then pick.cell, pick.list = nil, nil; return end
+-- The list, drawn like the bar's right-click menus: dark and rounded, a soft hover; each row the item's icon, its
+-- name, the bag on the right; the worn one outlined and tagged. Opens beside the grid (its right, else its left).
+local PICK_ICON, PICK_ROWS, PICK_GAP = 20, 14, 8
+local PICK_HINT = 'click: wear it, keeps it (/lock)'
+local MENU_PAD, MENU_SPACE = { 8, 6 }, { 6, 2 }
+local COL_HOVER, COL_NONE, COL_LINE = { 1, 1, 1, 0.12 }, { 0, 0, 0, 0 }, { 1, 1, 1, 0.12 }
+local WORN_FILL, WORN_EDGE = { 0.62, 0.68, 0.80, 0.10 }, { 0.62, 0.68, 0.80, 0.75 }
+-- Row width from the texts, and the spot beside the grid window (x, y, width), kept while the list is open.
+local function pick_layout(c, wx, wy, ww)
+    local nameW, bagW = textw('Take it off'), 0
+    for _, e in ipairs(pick.list) do
+        e.label = e.name .. ((e.n > 1) and (' x' .. e.n) or '')
+        nameW, bagW = math.max(nameW, textw(e.label)), math.max(bagW, textw(e.bag))
+    end
+    local tagW = textw('worn') + 8
+    pick.rowW = math.max(textw(c.name) + textw(PICK_HINT) + 24, PICK_ICON + PICK_GAP + nameW + 16 + tagW + 8 + bagW + 6)
+    local w = pick.rowW + 2 * MENU_PAD[1] + ((#pick.list > PICK_ROWS) and 14 or 0)
+    local ok, sw = pcall(function() return imgui.GetMainViewport().Size.x end)
+    sw = ok and tonumber(sw) or 1920
+    local px = wx + ww + 6
+    if (px + w > sw) then px = math.max(0, wx - w - 6) end
+    pick.pos = { math.floor(px), math.floor(wy) }
+end
+local function pick_row(dl, c, i, e) -- e: an item of pick.list, or 'off' (take it off)
+    local x, y = xy(imgui.GetCursorScreenPos())
+    local off = (e == 'off')
+    local t = (not off) and icon(e.id) or nil
+    if (t ~= nil) then imgui.Image(t.id, size(PICK_ICON, PICK_ICON)) else imgui.Dummy(size(PICK_ICON, PICK_ICON)) end
+    imgui.SameLine(0, PICK_GAP)
+    local clicked = imgui.Selectable('##gcgp' .. i, false, 0, size(pick.rowW - PICK_ICON - PICK_GAP, PICK_ICON))
+    if (x == nil) or (y == nil) then return clicked end
+    local x2, y2 = x + pick.rowW, y + PICK_ICON
+    local lh = imgui.GetTextLineHeight()
+    local ty, tx = y + math.floor((PICK_ICON - lh) / 2), x + PICK_ICON + PICK_GAP
+    local worn = (not off) and (c.item ~= nil) and (string.lower(c.item) == string.lower(e.name))
+    if worn then
+        dl:AddRectFilled(va(x - 4, y - 1), vb(x2 + 4, y2 + 1), u32(WORN_FILL), 7)
+        dl:AddRect(va(x - 4, y - 1), vb(x2 + 4, y2 + 1), u32(WORN_EDGE), 7, 0, 1)
+    end
+    if imgui.IsItemHovered() then dl:AddRectFilled(va(x - 4, y - 1), vb(x2 + 4, y2 + 1), u32(COL_HOVER), 7) end
+    if off then -- a red X where the icon goes
+        local m = 5
+        dl:AddLine(va(x + m, y + m), vb(x + PICK_ICON - m, y + PICK_ICON - m), u32(COL.lock), 2)
+        dl:AddLine(va(x + PICK_ICON - m, y + m), vb(x + m, y + PICK_ICON - m), u32(COL.lock), 2)
+        dl:AddText(va(tx, ty), u32(COL_DIM), 'Take it off')
+        return clicked
+    end
+    dl:AddText(va(tx, ty), u32(COL_HEAD), e.label)
+    local bx = x2 - 6 - textw(e.bag)
+    dl:AddText(va(bx, ty), u32(COL_DIM), e.bag)
+    if worn then
+        local tw = textw('worn')
+        local px = bx - 12 - tw - 8
+        dl:AddRect(va(px, y + 2), vb(px + tw + 8, y2 - 2), u32(WORN_EDGE), (PICK_ICON - 4) / 2, 0, 1)
+        dl:AddText(va(px + 4, ty), u32(COL_KEY), 'worn')
+    end
+    return clicked
+end
+local function pick_body()
     local c = pick.cell
-    if (c == nil) then imgui.EndPopup(); return end
-    line(c.name .. ': your gear that fits (click: wear it, /lock)', COL_HEAD)
-    if (#pick.list == 0) then line('Nothing in your equip bags fits it for this job.', COL_DIM) end
-    local lh = math.max(PICK_ICON, imgui.GetTextLineHeight()) + 4
-    local child = (#pick.list > PICK_ROWS)
-    if child then imgui.BeginChild('##gcgear_picks', size(0, PICK_ROWS * lh), 0) end
+    local dl = imgui.GetWindowDrawList()
+    local x0, y0 = xy(imgui.GetCursorScreenPos())
+    line(c.name, COL_HEAD)
+    if (x0 ~= nil) and (y0 ~= nil) then
+        dl:AddText(va(x0 + pick.rowW - textw(PICK_HINT), y0), u32(COL_DIM), PICK_HINT)
+    end
+    imgui.Separator()
     budget = ICONS_PER_FRAME
+    local picked = nil
+    if (c.id ~= 0) and pick_row(dl, c, 0, 'off') then picked = 'remove' end
+    if (#pick.list == 0) then line('Nothing in your equip bags fits it for this job.', COL_DIM) end
+    local child = (#pick.list > PICK_ROWS)
+    if child then
+        imgui.BeginChild('##gcgear_picks', size(0, PICK_ROWS * (PICK_ICON + MENU_SPACE[2])), 0)
+        dl = imgui.GetWindowDrawList()
+    end
     for i, e in ipairs(pick.list) do
-        local t = icon(e.id)
-        if (t ~= nil) then imgui.Image(t.id, size(PICK_ICON, PICK_ICON))
-        else imgui.Dummy(size(PICK_ICON, PICK_ICON)) end
-        imgui.SameLine()
-        local label = e.name .. ((e.n > 1) and (' x' .. e.n) or '') .. '   ' .. e.bag .. '##gcgp' .. i
-        if imgui.Selectable(label, (c.item ~= nil) and (string.lower(c.item) == string.lower(e.name))) then
-            wear(c, e.name)
-            imgui.CloseCurrentPopup()
-        end
+        if pick_row(dl, c, i, e) then picked = e.name end
     end
     if child then imgui.EndChild() end
-    imgui.EndPopup()
+    if (picked ~= nil) then
+        wear(c, picked)
+        imgui.CloseCurrentPopup()
+    end
+end
+local function draw_pick()
+    if (pick.cell == nil) then return end
+    if (pick.pos ~= nil) then imgui.SetNextWindowPos(va(pick.pos[1], pick.pos[2]), ImGuiCond_Appearing) end
+    imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, MENU_PAD)
+    imgui.PushStyleVar(ImGuiStyleVar_ItemSpacing, MENU_SPACE)
+    imgui.PushStyleVar(ImGuiStyleVar_PopupRounding, 10)
+    imgui.PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1)
+    imgui.PushStyleColor(ImGuiCol_PopupBg, COL_TIP_BG)
+    imgui.PushStyleColor(ImGuiCol_Border, COL_EDGE)
+    imgui.PushStyleColor(ImGuiCol_Separator, COL_LINE)
+    imgui.PushStyleColor(ImGuiCol_Header, COL_NONE) -- the rows' own hover and worn marks, not the theme's
+    imgui.PushStyleColor(ImGuiCol_HeaderHovered, COL_NONE)
+    imgui.PushStyleColor(ImGuiCol_HeaderActive, COL_NONE)
+    local ok, why = true, nil
+    if imgui.BeginPopup('##gcgear_pick') then
+        ok, why = pcall(pick_body)
+        imgui.EndPopup()
+    else
+        pick.cell, pick.list, pick.pos = nil, nil, nil
+    end
+    imgui.PopStyleColor(6)
+    imgui.PopStyleVar(4)
+    if not ok then error(why, 0) end
 end
 -- Right-click a slot: /gcedit on the set that put it on (or asked for it), that slot selected. Ctrl+click: /lock or
 -- /unlock it, as typed (its chat line). Alt+click: take it off; Shift+click: pick other gear (both kept: your /lock).
@@ -675,6 +759,9 @@ local function act(c, click)
         wear(c, 'remove')
     elseif (click == 'pick') then
         pick.cell, pick.list = c, gear_for(c)
+        local wx, wy = xy(imgui.GetWindowPos())
+        local ww = xy(imgui.GetWindowSize())
+        pick_layout(c, wx or 0, wy or 0, ww or 0)
         imgui.OpenPopup('##gcgear_pick')
     end
 end
