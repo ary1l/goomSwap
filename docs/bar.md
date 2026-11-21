@@ -69,17 +69,17 @@ The weapon's class comes from the mode's Main, else Range, else Sub; add your ow
 
 What you have on, 4x4 in the equipment window's order (Main Sub Range Ammo / Head Neck Ear1 Ear2 / Body Hands Ring1
 Ring2 / Back Waist Legs Feet), drawn like atom0s' equipmon: the game's item icons, the ammo count, a red X on a slot
-the game has encumbered (Salvage...). On top of that, a padlock in the top left corner says what keeps a slot (no
-borders: some item icons have their own coloured frame):
+the game has encumbered (Salvage...). On top of that, corner marks say what keeps a slot (no borders: some item
+icons have their own coloured frame):
 
 | Mark | Means |
 |---|---|
-| Red padlock | your `/lock` |
-| Amber padlock | held to keep your TP (`WeaponTPGuard`) or Aftermath (`AftermathHold`): Main, Sub, Range |
-| Purple padlock | Aminon, Hoxne, `/proc`, an item use (`/gce`, `/warpring`...) or a hold (`/capacity` `/jubilee` `/dynamisrp` `/abyproc`) |
+| Red padlock, bottom left | your `/lock` |
+| Purple padlock, bottom left | Aminon, Hoxne, `/proc`, an item use (`/gce`, `/warpring`...) or a hold (`/capacity` `/jubilee` `/dynamisrp` `/abyproc`) |
+| Amber dot, bottom right | held to keep your TP (`WeaponTPGuard`) or Aftermath (`AftermathHold`): Main, Sub, Range; weapon commands (`/wm`...) still swap |
 | Pink corner | still needs RP (rank below its cap) |
 | Red X | encumbered: the game has locked the slot |
-| Orange `!` | a swap that didn't go on: GoomSwap's last swap named another item, nothing holds the slot, still not on 2s later |
+| Orange `!`, top left | a swap that didn't go on: GoomSwap's last swap named another item, nothing holds the slot, still not on 2s later |
 
 **Hover** a slot: the item (and its rank), the set that put it on (`From Tp_Default (Engaged)`; `Last swap asked for
 ...` when what you wear isn't what GoomSwap's last swap named, e.g. a locked slot), and every lock or hold on it with
@@ -87,7 +87,11 @@ the command that frees it. With a `!`, why that item isn't on: not in your bags,
 Storage...; LAC's `EquipBags`), your job can't wear it, or it needs a higher level.
 
 **Right-click** a slot: `/gcedit` on the set that put it on (or asked for it), that slot selected. **Ctrl+click**:
-`/lock` that slot, again to `/unlock` it.
+`/lock` that slot, again to `/unlock` it. **Alt+click**: take it off. **Shift+click**: your gear that fits the slot
+(from the bags LAC equips from, for this job and level); click one to wear it. Both keep the slot as you left it with
+your `/lock` (else the next swap would put the set's piece back): `/unlock <slot>` hands it back to your sets. They
+won't change a slot another feature holds (its off command is named) or a weapon held for your TP (Ctrl+click it
+first).
 
 - **Window:** `/gcgear` (off at first). Bare like equipmon without its backgrounds: icons only, 1px apart. Drag it
   anywhere (saved per character); hidden with the game's interface, as the bar is.
