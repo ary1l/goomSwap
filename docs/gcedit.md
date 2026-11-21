@@ -133,6 +133,11 @@ a job file's own setting still wins. Details: [Settings](settings.md).
 | Unchanged / Replaced: source | The set leaves the slot alone / a later layer of the selected Result wins |
 
 - Click a slot, then pick an item from **Gear**; the header shows **Pending** vs **Saved** (paths, augments).
+- **Put in other sets...** (over the picker, or right-click a slot card): that piece, exactly as it is (path,
+  augments), into the same slot of the sets you tick: grouped by heading, each showing what it has now (sets that
+  already have it, or write that slot as code, can't be ticked); **All in <heading>** ticks the open set's heading
+  (an enmity piece in every job ability). Each is an unsaved edit: **Undo slot** per set, **Undo edit** one at a
+  time; Save writes them.
 - Search matches words anywhere in the name or decoded stats (`nyame damage`); 3+ letters also lists items you don't
   own, after yours, marked not owned, to plan a set (every item is looked through once, a moment the first time).
   Combine **Any job / level**, **Can equip now**, **Needs RP** and **Augmented**. Identical copies share a row; hover

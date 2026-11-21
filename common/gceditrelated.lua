@@ -370,6 +370,145 @@ local function draw_mset_mode()
     imgui.EndPopup()
 end
 
+-- Put in other sets: one slot's piece, exactly as written (path, augments), into the same slot of the sets ticked.
+-- Each is a pending edit (as Copy from makes them: Undo slot per set; Save writes them). Sets written as code, a
+-- table of sets, deleted, or with that slot written as code can't take it.
+local function same_piece(a, b)
+    if (a == nil) or (b == nil) then return false end
+    return (string.lower(tostring(a.name)) == string.lower(tostring(b.name)))
+        and (string.lower(tostring(a.path or '')) == string.lower(tostring(b.path or '')))
+        and (string.lower(tostring(a.augs or '')) == string.lower(tostring(b.augs or '')))
+end
+local function put_rows(P)
+    local doc, rows, place = editorState.document, {}, {}
+    for i, h in ipairs(ctx.headings.order()) do place[h] = i end
+    for i, s in ipairs(doc.model.list) do
+        if (s.name ~= P.set) and (s.code == nil) and not s.extra and not doc.deleted[s.name] then
+            local saved = s.slots[P.slot]
+            local r = { set = s, at = i, tick = { false } }
+            local v = current(s, P.slot)
+            if (saved ~= nil) and (saved.value.kind == 'code') then
+                r.note, r.off = 'code', true
+            elseif same_piece(v, P.source) then
+                r.note, r.off = 'has it', true
+            else
+                r.note = 'now ' .. (((v ~= nil) and v.name) or 'empty')
+            end
+            rows[#rows + 1] = r
+        end
+    end
+    table.sort(rows, function(a, b)
+        local pa, pb = place[a.set.group] or 999, place[b.set.group] or 999
+        if pa ~= pb then return pa < pb end
+        return a.at < b.at
+    end)
+    return rows
+end
+local function put_in(P)
+    local n = 0
+    for _, r in ipairs(P.rows) do
+        if r.tick[1] and not r.off then
+            local s, slot, src = r.set, P.slot, P.source
+            local saved = s.slots[slot]
+            local pending = editorState.document.edits[s.name] or {}
+            editorState.history.entries = editorState.history.entries or {}
+            editorState.history.entries[#editorState.history.entries + 1] = { set = s.name, slot = slot,
+                previous = pending[slot] }
+            if #editorState.history.entries > 100 then table.remove(editorState.history.entries, 1) end
+            if (saved ~= nil) and (saved.value.raw == (src.text or src.raw)) then
+                pending[slot] = nil
+            else
+                pending[slot] = { kind = src.kind, name = src.name, path = src.path, rank = src.rank, augs = src.augs,
+                    raw = src.raw, text = src.text or src.raw }
+            end
+            editorState.document.edits[s.name] = next(pending) and pending or nil
+            n = n + 1
+        end
+    end
+    editorState.document.revision = editorState.document.revision + 1
+    editorState.history.revision = editorState.document.revision -- Undo edit takes them back one by one
+    return n
+end
+local function draw_put_in()
+    local ui = editorState.ui
+    if ui.requestPutIn ~= nil then
+        local req = ui.requestPutIn
+        ui.requestPutIn = nil
+        local set = editorState.document.model.byName[req.set]
+        local src = (set ~= nil) and current(set, req.slot) or nil
+        if (src ~= nil) and (src.kind == 'item') then
+            ui.putIn = { set = req.set, slot = req.slot, source = src, group = set.group, find = { '' } }
+            ui.putIn.rows = put_rows(ui.putIn)
+            imgui.OpenPopup('##gcedit_putin')
+        end
+    end
+    if not imgui.BeginPopup('##gcedit_putin') then return end
+    local P = ui.putIn
+    if P == nil then imgui.EndPopup(); return end
+    local what = P.source.name .. ((P.source.path ~= nil) and (' (Path ' .. P.source.path .. ')')
+        or (((P.source.augs or '') ~= '') and ' (augmented)' or ''))
+    imgui.TextColored(palette.section, 'Put ' .. what .. ' in ' .. P.slot .. ' of:')
+    if ((P.source.augs or '') ~= '') and imgui.IsItemHovered() then set_tip(P.source.augs) end
+    imgui.PushItemWidth(220)
+    imgui.InputTextWithHint('##gcpi_find', 'Find a set...', P.find, 48)
+    imgui.PopItemWidth()
+    local group = tostring(P.group or '')
+    imgui.SameLine()
+    if imgui.SmallButton('All in ' .. group .. '##gcpi_all') then
+        for _, r in ipairs(P.rows) do
+            if (r.set.group == P.group) and not r.off then r.tick[1] = true end
+        end
+    end
+    imgui.SameLine()
+    if imgui.SmallButton('None##gcpi_none') then
+        for _, r in ipairs(P.rows) do r.tick[1] = false end
+    end
+    local find = string.lower(P.find[1] or '')
+    local lh = (imgui.GetFrameHeightWithSpacing ~= nil) and imgui.GetFrameHeightWithSpacing() or 24
+    local borders = ImGuiChildFlags_Borders or ImGuiChildFlags_Border or 1
+    imgui.BeginChild('##gcpi_list', { 520, math.min(340, (#P.rows + 6) * lh) }, borders)
+    local heading = nil
+    for i, r in ipairs(P.rows) do
+        if (find == '') or string.find(r.set.lname, find, 1, true) then
+            if (r.set.group ~= heading) then
+                heading = r.set.group
+                imgui.TextColored(palette.section, string.upper(tostring(heading)))
+            end
+            if r.off then
+                imgui.TextColored(palette.dim, '    ' .. r.set.name)
+            else
+                imgui.Checkbox(r.set.name .. '##gcpi' .. i, r.tick)
+            end
+            imgui.SameLine()
+            local nw = text_w(r.note)
+            if (imgui.GetContentRegionAvail ~= nil) and (imgui.SetCursorPosX ~= nil)
+                and (imgui.GetCursorPosX ~= nil) then
+                local avail = xy(imgui.GetContentRegionAvail())
+                if (avail ~= nil) and (avail > nw) then imgui.SetCursorPosX(imgui.GetCursorPosX() + avail - nw) end
+            end
+            imgui.TextColored(palette.dim, r.note)
+        end
+    end
+    imgui.EndChild()
+    local n = 0
+    for _, r in ipairs(P.rows) do
+        if r.tick[1] and not r.off then n = n + 1 end
+    end
+    if make_button('Put in ' .. n .. ' set' .. ((n == 1) and '' or 's') .. '##gcpi_put') and (n > 0) then
+        local done = put_in(P)
+        feedback('Put ' .. what .. ' in ' .. P.slot .. ' of ' .. done .. ' set' .. ((done == 1) and '' or 's')
+            .. ' (unsaved): Undo slot per set; Save writes them.')
+        ui.putIn = nil
+        imgui.CloseCurrentPopup()
+    end
+    imgui.SameLine()
+    if imgui.Button('Cancel##gcpi_cancel') then
+        ui.putIn = nil
+        imgui.CloseCurrentPopup()
+    end
+    imgui.EndPopup()
+end
+
 -- Every set GoomSwap could put on for this set's action, grouped by what has to be on for it, have or missing.
 local function draw_over(set)
     local wi = editorState.ui.wi
@@ -803,6 +942,15 @@ local function draw_picker(set)
         if imgui.SmallButton('Undo slot##gcedit') then undo_slot(set, editorState.selection.slot) end
         if imgui.IsItemHovered() then
             set_tip('Back to what the file has: ' .. ((cur ~= nil) and cur.value.name or 'empty'))
+        end
+    end
+    if (now ~= nil) and (now.kind == 'item') and (now.name ~= nil) then
+        editorPanels.SameLineIfFits(imgui, text_w('Put in other sets...') + 24)
+        if make_button('Put in other sets...##gcedit_putin') then
+            editorState.ui.requestPutIn = { set = set.name, slot = editorState.selection.slot }
+        end
+        if imgui.IsItemHovered() then
+            set_tip('This piece as it is here (path and augments too) into the same slot of other sets you tick.')
         end
     end
     imgui.PushItemWidth(-1)
@@ -1399,6 +1547,12 @@ local function draw_context_menu()
                 go_to(set.name, slot, 'gear')
                 imgui.CloseCurrentPopup()
             end
+            local here = (context.kind == 'slot') and current(set, slot) or nil
+            if (context.kind == 'slot') and menu_button('Put in other sets...##context',
+                (here ~= nil) and (here.kind == 'item') and (here.name ~= nil)) then
+                editorState.ui.requestPutIn = { set = set.name, slot = slot }
+                imgui.CloseCurrentPopup()
+            end
             imgui.Separator()
             local defined = current(set, slot)
             if menu_button('Set displaced rule##context', editable
@@ -1473,6 +1627,7 @@ end
     return { draw_over = draw_over, draw_picker = draw_picker, fill_list = fill_list, draw_fill = draw_fill,
         draw_weapon_sets = draw_weapon_sets,
         draw_mset_mode = draw_mset_mode,
+        draw_put_in = draw_put_in,
         draw_context_menu = draw_context_menu, variants_of = variants_of, rename_problem = rename_problem,
         rename_new = rename_new }
 end
