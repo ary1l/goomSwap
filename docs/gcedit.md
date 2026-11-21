@@ -131,10 +131,10 @@ a job file's own setting still wins. Details: [Settings](settings.md).
 | Unchanged / Replaced: source | The set leaves the slot alone / a later layer of the selected Result wins |
 
 - Click a slot, then pick an item from **Gear**; the header shows **Pending** vs **Saved** (paths, augments).
-- Search matches words anywhere in the name or decoded stats (`nyame damage`). Combine **Any job / level**,
-  **Can equip now**, **Needs RP**, **Augmented** and **All items** (every item you don't own too, for planning;
-  indexed once, a moment the first time). Identical copies share a row; hover for their bags. Drag a row onto a
-  card to stage it.
+- Search matches words anywhere in the name or decoded stats (`nyame damage`); 3+ letters also lists items you don't
+  own, after yours, marked not owned, to plan a set (every item is looked through once, a moment the first time).
+  Combine **Any job / level**, **Can equip now**, **Needs RP** and **Augmented**. Identical copies share a row; hover
+  for their bags. Drag a row onto a card to stage it.
 - Right-click a card or row: inspect, choose, **Set displaced rule** (`Slot = 'displaced'`: another item empties
   the slot, e.g. an instrument displacing ammo), undo, or **Clear slot** (earlier gear stays).
 

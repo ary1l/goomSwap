@@ -1,5 +1,6 @@
 -- /gcedit's bag scans: every piece of gear you own (bags and Storage Slips), and every equippable item in the game
--- for the picker's All items. No editor state: the editor keeps what these return.
+-- for the picker's search (3+ letters also finds items you don't own). No editor state: the editor keeps what these
+-- return.
 local bags = {}
 local augmentInfo = gFunc.LoadFile('common\\gcaugments.lua')
 local rankDecoder = augmentInfo.Rank
@@ -130,8 +131,9 @@ local function scan_owned()
     return list, idx
 end
 
--- Every equippable item in the game, one row per name (the highest level), for the picker's All items: indexed a
--- slice per frame (all 65535 ids at once hitches the game, as luashitaview found). Kept while LuAshitacast runs.
+-- Every equippable item in the game, one row per name (the highest level), for the picker's search (3+ letters also
+-- finds items you don't own): indexed a slice per frame the first time (all 65535 ids at once hitches the game, as
+-- luashitaview found), ~15000 rows, kept while LuAshitacast runs.
 local allItems = { done = false, nextId = 1, rows = {}, byName = {} }
 local function index_all_items()
     if allItems.done then return true end

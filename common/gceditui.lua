@@ -228,7 +228,6 @@ function state.New(profile)
             wardOnly = { false },
             rpOnly = { false },
             augOnly = { false },
-            allItems = { false },
             newMode = { '' },
             overShow = 'all',
             overShowIgnored = { false },
